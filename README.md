@@ -23,7 +23,8 @@ It all started playfully: I dropped a screenshot of Ticker in Claude, asking to 
 So I decided to add stuff I missed from Ticker:  
 - the graphs  
 - the CSV parsing feature  
-- some cosmetic changes done manually  
+- some cosmetic changes done manually
+
 ... and after 38 iterations/releases, all done locally in small free time spans, I decided to try GitHub to release it.
 
 # Disclaimer on the use-case
