@@ -21,7 +21,7 @@ And also because I wanted to verify if all the hype on "vibe coding" meant somet
 Oh well actually it did!  
 It all started playfully: I dropped a screenshot of Ticker in Claude, asking to build a Powershell script which could give me the same output, "let's see if something happens"...  
 2 minutes later I had the same output I have in Ticker!  
-So I decided to add stuff I missed, to get the same information i like to have in Yahoo Finance:  
+So I decided to add stuff I missed, to get the same information i like to have in Yahoo Finance, but in my beloved terminal:  
 - the graphs  
 - the CSV parsing feature  
 - cosmetic changes done manually, because I am a f'ing perfectionist sometimes
@@ -29,12 +29,12 @@ So I decided to add stuff I missed, to get the same information i like to have i
 ... and after 38 iterations/releases done in small free time spans, I decided to release it here.
 
 # Disclaimers
-## 1. This was built for my own needs.
+### 1. This was built for my own needs.
 I invest in Italy, buying only ETFs for the long run.  
 So I picked the data I needed to show on screen, and ignored some other data.  
 It could fail with crypto, stocks, bonds, and other asset classes which are not ETFs.
 
-## 2. Vibe coding is far from fail-proof
+### 2. Vibe coding is not fail-proof
 This was 98% built by the free version of these AI models: Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
 So please expect errors.  
 Feel free to open a new Issue if you can.
