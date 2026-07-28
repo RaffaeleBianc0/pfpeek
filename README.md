@@ -1,7 +1,8 @@
 # rbPfPeek
 Windows Powershell script to show portfolio performance in the console.
 
-<img width="1286" height="943" alt="rbPfPeek" src="https://github.com/user-attachments/assets/7fd3fd6a-97e4-4d9e-94f0-87739885446b" />
+<img alt="rbPfPeek" src="https://github.com/user-attachments/assets/cd7514f4-560b-49a6-bc2c-75651200fd0e" />
+
 
 The portfolio assets can be read from a CSV exported from Directa (my current broker), or manually inputed in the `$manualAssets` splatted variable.
 
