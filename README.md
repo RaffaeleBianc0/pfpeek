@@ -29,7 +29,7 @@ So I decided to add stuff I missed, to get the same information i like to have i
 ... and after 38 iterations/releases done in small free time spans, I decided to release it here.
 
 # Disclaimers
-### 1. This was built for my own needs.
+### 1. This was built for my own needs
 I invest in Italy, buying only ETFs for the long run.  
 So I picked the data I needed to show on screen, and ignored some other data.  
 It could fail with crypto, stocks, bonds, and other asset classes which are not ETFs.
