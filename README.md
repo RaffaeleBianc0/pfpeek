@@ -2,7 +2,7 @@
 
 <img alt="rbPfPeek" src="https://github.com/user-attachments/assets/cd7514f4-560b-49a6-bc2c-75651200fd0e" />
 
-Please read the comments in the topmost part of the script to find detailed and updated information on configuration.
+Please read the `#comments` in the topmost part of the script to find detailed and updated information on configuration.
 
 # Features
 - Graphical display of your portfolio performance today, and since a custom date.
@@ -17,22 +17,23 @@ Please read the comments in the topmost part of the script to find detailed and 
 # Why?
 This exists because I love [Ticker](https://github.com/achannarasappa/ticker), but i wanted some more information on screen.
 
-And also because I wanted to verify if all the hype on "vibe coding" meant something... 
-Oh well actually it did! 
-It all started playfully: I dropped a screenshot of Ticker in Claude, asking to build a Powershell script which could give me the same output, "let's see if something happens"... 2 minutes later I had the same output I have in Ticker!
-So I decided to add stuff I missed from Ticker:
-- the graphs
-- the CSV parsing feature
-- some cosmetic changes done manually
+And also because I wanted to verify if all the hype on "vibe coding" meant something...  
+Oh well actually it did!  
+It all started playfully: I dropped a screenshot of Ticker in Claude, asking to build a Powershell script which could give me the same output, "let's see if something happens"... 2 minutes later I had the same output I have in Ticker!  
+So I decided to add stuff I missed from Ticker:  
+- the graphs  
+- the CSV parsing feature  
+- some cosmetic changes done manually  
 ... and after 38 iterations/releases, all done locally in small free time spans, I decided to try GitHub to release it.
 
 # Disclaimer on the use-case
-This was built for my own needs: i invest in Italy, only using ETFs, and only for the long run. So I picked the data I needed to show on screen.
+This was built for my own needs: i invest in Italy, buying only ETFs for the long run.  
+So I picked the data I needed to show on screen, and ignored some other data.  
+If you find any issue using your tickers, please open an Issue. Thankyou!
 
 # Disclaimer on AI
-This was 98% built by the free version of these AI models: Claude, Gemini, Deepseek, and a bit of Qwen run locally.
-
-So please expect errors.
-
-Please report them if you can. I am not a developer, but I am willing to have my published stuff well working. 
+This was 98% built by the free version of these AI models: Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
+So please expect errors.  
+Please report them opening an Issue if you can.  
+I am not a developer, but I am willing to have my published stuff well working.  
 Thank you!
