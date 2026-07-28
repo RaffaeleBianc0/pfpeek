@@ -1,5 +1,5 @@
 # TODO:
-# - Scrivi in un file .\rbPfPeek-log.tsv in append una riga nel formato: <timestamp> INFO <tutte le statistiche riepilogative del portafoglio, separandole con un TAB>
+# - Scrivere in un file .\rbPfPeek-log.tsv in append una riga nel formato: <timestamp> INFO <tutte le statistiche riepilogative del portafoglio, separandole con un TAB>
 
 # --- PORTFOLIO CONFIGURATION ---
 # Choose the portfolio source:
