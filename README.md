@@ -8,6 +8,13 @@ The portfolio assets can be read from a CSV exported from Directa (my current br
 
 Please read the comments in the topmost part of the script to find detailed and updated information on configuration.
 
+# Features
+- Compatible with the CSV format of your portfolio transactions as exported by Directa (my current italian broker).
+  - Alternatively, you can specify your own tickers with quantity and average price.
+- The UI can adapt to the console window size.
+- Gets the current market data from the web (Yahoo Finance).
+- Runs on any Powershell version (tested in Windows Powershell v5.1 and Powershell v7.6.4). 
+
 # Why?
 This exists because I love [Ticker](https://github.com/achannarasappa/ticker), but i wanted some more information on screen.
 
