@@ -19,22 +19,24 @@ This exists because I love [Ticker](https://github.com/achannarasappa/ticker), b
 
 And also because I wanted to verify if all the hype on "vibe coding" meant something...  
 Oh well actually it did!  
-It all started playfully: I dropped a screenshot of Ticker in Claude, asking to build a Powershell script which could give me the same output, "let's see if something happens"... 2 minutes later I had the same output I have in Ticker!  
-So I decided to add stuff I missed from Ticker:  
+It all started playfully: I dropped a screenshot of Ticker in Claude, asking to build a Powershell script which could give me the same output, "let's see if something happens"...  
+2 minutes later I had the same output I have in Ticker!  
+So I decided to add stuff I missed, to get the same information i like to have in Yahoo Finance:  
 - the graphs  
 - the CSV parsing feature  
-- some cosmetic changes done manually
+- cosmetic changes done manually, because I am a f'ing perfectionist sometimes
 
-... and after 38 iterations/releases, all done locally in small free time spans, I decided to try GitHub to release it.
+... and after 38 iterations/releases done in small free time spans, I decided to release it here.
 
-# Disclaimer on the use-case
-This was built for my own needs: i invest in Italy, buying only ETFs for the long run.  
+# Disclaimers
+## 1. This was built for my own needs.
+I invest in Italy, buying only ETFs for the long run.  
 So I picked the data I needed to show on screen, and ignored some other data.  
-If you find any issue using your tickers, please open an Issue. Thankyou!
+It could fail with crypto, stocks, bonds, and other asset classes which are not ETFs.
 
-# Disclaimer on AI
+## 2. Vibe coding is far from fail-proof
 This was 98% built by the free version of these AI models: Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
 So please expect errors.  
-Please report them opening an Issue if you can.  
+Feel free to open a new Issue if you can.
 I am not a developer, but I am willing to have my published stuff well working.  
 Thank you!
