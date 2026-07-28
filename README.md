@@ -18,5 +18,4 @@ This was 98% built by AI models: Claude, Gemini, Deepseek, and a bit of Qwen run
 So please expect errors.
 
 Please report them if you can. I am not a developer, but I am willing to have my published stuff well working. 
-
-Thankyou!
+Thank you!
