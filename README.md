@@ -26,7 +26,7 @@ So I decided to add stuff I missed, to get the same information i like to have i
 - the CSV parsing feature  
 - cosmetic changes done manually, because I am a f'ing perfectionist sometimes
 
-... and after 38 iterations/releases done in small free time spans, I decided to release it here.
+... and after 38 iterations/releases (this is why I'm starting with v1.38 here), all done in small free time spans, I feel confident enough to release it here.  
 
 # Disclaimers
 ### 1. This was built for my own needs
