@@ -5,9 +5,13 @@
 Please read the comments in the topmost part of the script to find detailed and updated information on configuration.
 
 # Features
+- Graphical display of your portfolio performance today, and since a custom date.
 - The portfolio assets can be read from a CSV exported from Directa (italian broker), or manually inputed in the `$manualAssets` splatted variable, with quantity and average price.
-- UI partially adapts to the console window size.
-- Current market data is retrieved from the web.
+- Overall metrics: Profit/Loss, Money-weighted Return Rate, Day change, Portfolio cost and value.
+  - If you provide the Directa CSV with all the portfolio transactions, then you also get info on expenses, trades, positions, and the total deposited and total withdrawn funds up to date.
+- For each asset you own, you get: type (equity, bonds, commodity, money market), ticker, full name, qty, average cost, current price, current value and portfolio share (useful for periodical re-balancing), overall and daily profit/loss.
+- UI partially adapts to the console window size. High is better; fullscreen is best.
+- Current assets market data is retrieved from the web.
 - Runs on any Powershell version (tested in Windows Powershell v5.1 and Powershell v7.6.4).
 
 # Why?
@@ -22,7 +26,10 @@ So I decided to add stuff I missed from Ticker:
 - some cosmetic changes done manually
 ... and after 38 iterations/releases, all done locally in small free time spans, I decided to try GitHub to release it.
 
-# Disclaimer
+# Disclaimer on the use-case
+This was built for my own needs: i invest in Italy, only using ETFs, and only for the long run. So I picked the data I needed to show on screen.
+
+# Disclaimer on AI
 This was 98% built by the free version of these AI models: Claude, Gemini, Deepseek, and a bit of Qwen run locally.
 
 So please expect errors.
