@@ -1,7 +1,39 @@
-# TODO:
-# - Scrivere in un file .\rbPfPeek-log.tsv in append una riga nel formato: <timestamp> INFO <tutte le statistiche riepilogative del portafoglio, separandole con un TAB>
+<#
+.SYNOPSIS
+    TODO: fill this space with the relevant info.
 
-# --- PORTFOLIO CONFIGURATION ---
+.DESCRIPTION
+    TODO: fill this space with the relevant info.    
+
+.NOTES
+         _    ___  __ ___         _
+     _ _| |__| _ \/ _| _ \___ ___| |__
+    | '_| '_ \  _/  _|  _/ -_) -_) / /
+    |_| |_.__/_| |_| |_| \___\___|_\_\
+
+    AUTHOR: Raffaele Bianco
+    VERSION: 1.40 (2026-07-29)
+    CHANGELOG:
+        * v1.38 (2026-07-28):
+            - First published release
+        * v1.39 (2026-07-29):
+            - Layout adattivo: nessun dato viene più troncato né separato dalla propria label; quando un elemento (label + dato) non entra nella larghezza console, va a capo per intero (vedi       Get-VisibleLength / Write-WrappedSegments). I grafici hanno un'altezza minima configurabile ($minChartHeight) affinché restino sempre significativi.
+        * v1.40 (2026-07-29):
+            - Ad ogni esecuzione viene aggiunta una riga di log in append a .\rbPfPeek-log.tsv nel formato: 
+            <timestamp> TAB INFO TAB <tutte le statistiche riepilogative del portafoglio, separate da TAB>
+    TODO:
+        - If the TSV file is created for the first time, make the first row the header so it's clear what each column contains.
+        - Prepend "+" to positive percentage values.
+        - Verify correct output formatting even when numeric values are greater than or equal to 100000: I want thousand separator "." and correct alignment of the columns.
+        - If the console is very wide, the asset table can also be reformatted to a single row per asset instead of two: apply this adjustment taking into account the longest asset description to keep all columns aligned.
+        - Translate all existing Italian comments and variables into English.
+        - Break down $giorniInvestimento into "y M d" if the start date is in a previous year, otherwise "M d" if the start date is in a previous month, otherwise keep just "d" as it is now.
+        - Apply correct numbering to some numbered comments that are not well ordered, following the code logic.
+#>
+
+
+
+# --- CONFIGURATION STARTS HERE ---------------------------------------------
 # Choose the portfolio source:
 #   $true  -> rebuilds it by reading the "Movimenti" CSV export from Directa Trading
 #   $false -> uses the static $manualAssets list below
@@ -11,8 +43,8 @@ $useCsvPortfolio = $true
 # - If $csvPath is specified, that exact file is used.
 # - If $csvPath is $null, the script automatically searches for the most recent
 #   "Movimenti_*.csv" file in the script directory (or current directory).
-$csvPath = $null   # e.g., "C:\Path\Movimenti_J1234_20-7-2026.csv"
-$tickerSuffix = ".MI" # Market suffix to add to the tickers read from the CSV (Directa exports them without suffix)
+$csvPath = $null        # e.g., "C:\Path\Movimenti_J1234_20-7-2026.csv"
+$tickerSuffix = ".MI"   # Market suffix to add to the tickers read from the CSV (Directa exports them without suffix)
 
 # --- Option B: Manual portfolio (used if $useCsvPortfolio = $false) ---
 # NOTE: If $useCsvPortfolio = $true, the order of this list defines the output sorting!
@@ -20,16 +52,20 @@ $manualAssets = @(
     @{ Ticker = "XD9U.MI"; AvgCost = 172.55; Qty = 49.00 }
     @{ Ticker = "EXUS.MI"; AvgCost = 33.27;  Qty = 156.00 }
     @{ Ticker = "EIMI.MI"; AvgCost = 34.64;  Qty = 43.00 }
+    @{ Ticker = "VWCE.MI"; AvgCost = 163.63; Qty = 1000.00 }
+    @{ Ticker = "XGLE.MI"; AvgCost = 207.00; Qty = 200.00 }
     @{ Ticker = "WGLD.MI"; AvgCost = 261.57; Qty = 3.00 }
     @{ Ticker = "XEON.MI"; AvgCost = 144.22; Qty = 35.00 }
 )
 
-# Custom start date for the second chart (typically: first investment date)
+# Custom start date for the second chart (you should put your first investment date here)
 $startDateConfig = "05/08/2024"
-# ---------------------------------------------------------------------------
+# --- CONFIGURATION ENDS HERE -----------------------------------------------
+
+
 
 # --- MINIMUM CONSOLE SIZE CHECK ---
-$minWidth = 114
+$minWidth = 75
 $consoleWidth = $minWidth
 if ($Host.UI.RawUI.WindowSize.Width) { $consoleWidth = $Host.UI.RawUI.WindowSize.Width }
 if ($consoleWidth -lt $minWidth) {
@@ -50,36 +86,36 @@ function Show-Progress {
 
     if ($Total -le 0) { return }
 
+    $barWidth = $Total
+
     $filled = [math]::Min($BarWidth, [math]::Max(0, [math]::Round(($Current / $Total) * $BarWidth)))
     $empty = $BarWidth - $filled
 
-    $bar = "#" * $filled + " " * $empty
-    
-    Write-Host "[" -NoNewline
-    Write-Host "$bar" -ForegroundColor White -NoNewline
-    Write-Host "] (" -NoNewline
+    $filledChar = [char]0x2588
+    $emptyChar = [char]0x2591
+    $bar = ($filledChar.ToString() * $filled) + ($emptyChar.ToString() * $empty)
+
     Write-Host "$Current" -ForegroundColor White -NoNewline
     Write-Host "/" -NoNewline
     Write-Host "$Total" -ForegroundColor White -NoNewline
-    Write-Host ") " -NoNewline
-    Write-Host "$Activity" -ForegroundColor Cyan
+    Write-Host " " -NoNewline
+    Write-Host "$bar" -ForegroundColor White -NoNewline
+    Write-Host " $Activity" -ForegroundColor Cyan
 
     # If completed, print newline
-    if ($Current -ge $Total) {
-        Write-Host ""
-    }
+    if ($Current -ge $Total) { Write-Host "" }
 }
 $totalSteps = 6
 
 # --- STEP 1: INITIALIZING & PREREQUISITES CHECK ---
-Show-Progress 1 $totalSteps "Initializing & checking prerequisites"
+Show-Progress 1 $totalSteps "Initializing"
 
 # 1. PowerShell Version Check (Requires PS 5.1+, works on both Windows PowerShell and PowerShell 7+)
 $psVer = $PSVersionTable.PSVersion
 if ($psVer.Major -lt 5 -or ($psVer.Major -eq 5 -and $psVer.Minor -lt 1)) {
     Write-Error "ERROR: This script requires PowerShell 5.1 or higher to run properly."
     Write-Warning "Your current version is: $psVer"
-    Write-Warning "Please download and install the latest PowerShell from: https://aka.ms/powershell-release"
+    Write-Warning "Please download and install the latest PowerShell."
     exit
 }
 
@@ -133,7 +169,7 @@ try {
 
 # --- STEP 2: BUILD PORTFOLIO (FROM CSV OR MANUAL) ---
 if ($useCsvPortfolio) {
-    Show-Progress 2 $totalSteps "Reading portfolio from Directa CSV export"
+    Show-Progress 2 $totalSteps "Reading portfolio from Directa CSV"
 
     # 1. Locate the CSV file
     if (-not $csvPath) {
@@ -243,6 +279,8 @@ if ($useCsvPortfolio) {
     Show-Progress 2 $totalSteps "Loading manual portfolio configuration"
     $assets = $manualAssets
 }
+
+
 
 # --- PORTFOLIO METRICS (available only when using Directa CSV export) ---
 $csvMetricsAvailable = $useCsvPortfolio
@@ -415,6 +453,8 @@ if ($csvMetricsAvailable) {
     }
     # ============================================================
 }
+
+
 
 # 1. ROBUST PARSING OF CONFIG DATE
 $dateParsed = [DateTime]::MinValue
@@ -714,7 +754,7 @@ function Get-YahooCrumb {
 
 # --- FETCH DATA WITH TIMEOUT AND TRY/CATCH ---
 try {
-    Show-Progress 3 $totalSteps "Connecting to Yahoo Finance and getting session token (crumb)"
+    Show-Progress 3 $totalSteps "Connecting to Yahoo Finance"
 
     $crumb = Get-YahooCrumb -WebSession $webSession
     if (-not $crumb) {
@@ -899,11 +939,15 @@ if ($Host.UI.RawUI.WindowSize.Height) { $consoleHeight = $Host.UI.RawUI.WindowSi
 $targetChartWidth = $consoleWidth - 2
 $widthThreshold2 = 140
 
+# Altezza minima di ciascun grafico (in righe), affinché resti sempre leggibile/significativo
+# anche quando la console è molto bassa e la formula sottostante darebbe un valore inferiore.
+$minChartHeight = 3
+
 $assetRowMultiplier = if ($consoleWidth -lt 130) { 4 } else { 3 } 
 $metricsRows = if ($csvMetricsAvailable) { if ($consoleWidth -ge $widthThreshold2) { 3 } else { 5 } } else { 0 }
 $fixedRows = 10 + $metricsRows + ($assets.Count * $assetRowMultiplier)
 $availableHeightForCharts = $consoleHeight - $fixedRows
-$calculatedChartHeight = [math]::Max(8, [int][math]::Floor($availableHeightForCharts / 2))
+$calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
 
 # Custom Portfolio Calculations
 $portfolioCustom = @()
@@ -1025,6 +1069,55 @@ function Get-TrendArrow ($val) {
 	if ($val -gt 0) { return [char]0x2191 } elseif ($val -lt 0) { return [char]0x2193 } else { return [char]0x2192 } 
 }
 
+# --- ADAPTIVE LAYOUT HELPERS (no truncation, no label/data split) ---
+
+# Lunghezza "visibile" di una stringa, cioè al netto delle sequenze di escape ANSI
+# (colori/reset) che non occupano spazio reale sulla console.
+function Get-VisibleLength ($text) {
+    if ([string]::IsNullOrEmpty($text)) { return 0 }
+    return ([regex]::Replace($text, "$ESC\[[0-9;]*m", "")).Length
+}
+
+# Stampa una sequenza di "elementi" (ciascuno già completo di label + dato, con eventuale
+# colore ANSI) impaginandoli affiancati finché entrano nella larghezza console; quando il
+# prossimo elemento non ci sta, va a capo con l'elemento intero (mai troncato, mai spezzato
+# a metà tra label e valore).
+function Write-WrappedSegments {
+    param(
+        [System.Text.StringBuilder]$OutputBuffer,
+        [string[]]$Segments,
+        [int]$ConsoleWidth,
+        [string]$Separator = "  ",
+        [string]$ContinuationIndent = "  "
+    )
+
+    $currentLine = $null
+    $currentLen = 0
+    $sepLen = Get-VisibleLength $Separator
+
+    foreach ($seg in $Segments) {
+        $segLen = Get-VisibleLength $seg
+        if ($null -eq $currentLine) {
+            $currentLine = $seg
+            $currentLen = $segLen
+            continue
+        }
+
+        if (($currentLen + $sepLen + $segLen) -le $ConsoleWidth) {
+            $currentLine += $Separator + $seg
+            $currentLen += $sepLen + $segLen
+        } else {
+            $null = $OutputBuffer.AppendLine($currentLine)
+            $currentLine = $ContinuationIndent + $seg
+            $currentLen = (Get-VisibleLength $ContinuationIndent) + $segLen
+        }
+    }
+
+    if ($null -ne $currentLine) {
+        $null = $OutputBuffer.AppendLine($currentLine)
+    }
+}
+
 $outputBuffer = [System.Text.StringBuilder]::new()
 
 $null = $outputBuffer.Append("$ESC[2J$ESC[H")
@@ -1109,7 +1202,7 @@ if ($csvMetricsAvailable -and $null -ne $mwrr) {
     $mwrrStr = ""
 }
 
-$null = $outputBuffer.AppendLine(" P/L: ${tcColor}$(Get-TrendArrow $totalChange) $($totalChange.ToString('F2')) ($($totalChangePct.ToString('F2'))%)$Reset   $mwrrStr   Day change: ${dcColor}$(Get-TrendArrow $totalDayChange) $($totalDayChange.ToString('F2')) ($($totalDayChangePct.ToString('F2'))%)$Reset   Cost: ${White}$($totalCost.ToString('F2'))$Reset   Value: ${White}$($totalValue.ToString('F2'))$Reset")
+$null = $outputBuffer.AppendLine(" Day change: ${dcColor}$(Get-TrendArrow $totalDayChange) $($totalDayChange.ToString('F2')) ($($totalDayChangePct.ToString('F2'))%)$Reset   $mwrrStr   P/L: ${tcColor}$(Get-TrendArrow $totalChange) $($totalChange.ToString('F2')) ($($totalChangePct.ToString('F2'))%)$Reset  =  Value ${White}$($totalValue.ToString('F2'))$Reset - Cost ${White}$($totalCost.ToString('F2'))$Reset")
 
 # E-bis. Portfolio Metrics (Impaginazione reattiva alla larghezza console)
 if ($csvMetricsAvailable) {
@@ -1135,16 +1228,49 @@ if ($csvMetricsAvailable) {
     $m6 = "${Gray}First invest:${Reset} ${White}${dataPrimoStr}${Reset} (${White}${giorniInvestimento}d ago${Reset})"
     $m7 = "${Gray}Deposited:${Reset} ${White}$($totaleVersato.ToString('F2'))${Reset}  ${Gray}Withdrawn:${Reset} ${White}$($totalePrelevato.ToString('F2'))${Reset}"
 
-    if ($consoleWidth -ge $minWidth) {
-        $null = $outputBuffer.AppendLine(" $m2  =  $m3")
-        $null = $outputBuffer.AppendLine(" $m4  $m5  $m6  $m7")
-    } else {
-        $null = $outputBuffer.AppendLine(" $m2 =")
-        $null = $outputBuffer.AppendLine("  = $m3")
-        $null = $outputBuffer.AppendLine(" $m4  $m5")
-        $null = $outputBuffer.AppendLine(" $m6  $m7")
-    }
+    # Impaginazione adattiva: ogni elemento (m2..m7) resta sempre intero; va a capo per intero
+    # quando non entra più nella larghezza console corrente, senza mai troncare o spezzare
+    # una label dal proprio dato.
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", "= $m3") -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent "  "
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m7) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+
     $null = $outputBuffer.AppendLine("-" * $consoleWidth)
+}
+
+# --- LOG APPEND: riga TSV con tutte le statistiche riepilogative del portafoglio ---
+try {
+    $logDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $logPath = Join-Path $logDir "rbPfPeek-log.tsv"
+    $ic = [System.Globalization.CultureInfo]::InvariantCulture
+
+    $logStats = [ordered]@{
+        TotalValue        = $totalValue.ToString('F2', $ic)
+        TotalCost         = $totalCost.ToString('F2', $ic)
+        TotalChange       = $totalChange.ToString('F2', $ic)
+        TotalChangePct    = $totalChangePct.ToString('F2', $ic)
+        TotalDayChange    = $totalDayChange.ToString('F2', $ic)
+        TotalDayChangePct = $totalDayChangePct.ToString('F2', $ic)
+        MWRRPct           = if ($csvMetricsAvailable -and $null -ne $mwrr) { ($mwrr * 100).ToString('F2', $ic) } else { "" }
+        ExpensesTotal     = if ($csvMetricsAvailable) { $totaleCostiSostenuti.ToString('F2', $ic) } else { "" }
+        ExpensesOfGainPct = if ($csvMetricsAvailable -and $null -ne $costRatio) { $costRatio.ToString('F2', $ic) } else { "" }
+        Commissions       = if ($csvMetricsAvailable) { $totaleCommissioni.ToString('F2', $ic) } else { "" }
+        StampDuty         = if ($csvMetricsAvailable) { $totaleBollo.ToString('F2', $ic) } else { "" }
+        CapitalGainTaxes  = if ($csvMetricsAvailable) { $totaleRitenute.ToString('F2', $ic) } else { "" }
+        BuyTrades         = if ($csvMetricsAvailable) { $numeroAcquisti } else { "" }
+        SellTrades        = if ($csvMetricsAvailable) { $numeroVendite } else { "" }
+        OpenPositions     = if ($csvMetricsAvailable) { $numeroPosizioniAperte } else { $assets.Count }
+        ClosedPositions   = if ($csvMetricsAvailable) { $numeroPosizioniChiuse } else { "" }
+        FirstInvestDate   = if ($csvMetricsAvailable -and $dataPrimoInvestimento) { $dataPrimoInvestimento.ToString('dd/MM/yyyy') } else { "" }
+        DaysInvested      = if ($csvMetricsAvailable) { $giorniInvestimento } else { "" }
+        Deposited         = if ($csvMetricsAvailable) { $totaleVersato.ToString('F2', $ic) } else { "" }
+        Withdrawn         = if ($csvMetricsAvailable) { $totalePrelevato.ToString('F2', $ic) } else { "" }
+    }
+
+    $logTimestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $logLine = (@($logTimestamp, "INFO") + @($logStats.Values)) -join "`t"
+    Add-Content -Path $logPath -Value $logLine -Encoding UTF8
+} catch {
+    Write-Warning "WARNING: Impossibile scrivere la riga di log in ${logPath}: $_"
 }
 
 # F. Individual Assets
@@ -1196,13 +1322,16 @@ foreach ($item in $portfolio) {
 
     $plString = "${Gray}P/L:${Reset} ${coloredGain}   ${Gray}Day:${Reset} $coloredDay"
 
-    if ($consoleWidth -ge $widthThreshold2) {
-        $null = $outputBuffer.AppendLine("$posRow   $plString")
-    } else {
-        $null = $outputBuffer.AppendLine("$posRow")
-        $null = $outputBuffer.AppendLine("  $plString")
-    }
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @($posRow, $plString) -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  "
     $null = $outputBuffer.AppendLine("")
 }
 
 Write-Host $outputBuffer.ToString() -NoNewline
+
+# Se avviato da Explorer, metti in pausa per lasciare leggere l'output
+$parentProcessId = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID").ParentProcessId
+$parentName = (Get-CimInstance Win32_Process -Filter "ProcessId = $parentProcessId").Name
+if ($parentName -eq "explorer.exe") {
+    Write-Host "`nPremi un tasto per chiudere la finestra..."
+    [void][System.Console]::ReadKey($true)
+}
