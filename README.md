@@ -2,11 +2,11 @@
 
 <img alt="pfpeek" src="https://github.com/user-attachments/assets/cd7514f4-560b-49a6-bc2c-75651200fd0e" />
 
-Please read the `#comments` in the topmost part of the script to find detailed and updated information on configuration.
+Please read the `#comments` in the topmost part of the script to find detailed and updated information.
 
 # Features
 - Graphical display of your portfolio performance today, and since a custom date.
-- The portfolio assets can be read from a CSV exported from Directa (italian broker), or manually inputed in the `$manualAssets` splatted variable, with quantity and average price.
+- The portfolio assets can be read from a CSV or manually inputed in the `$manualAssets` splatted variable, each with its quantity and average price.
 - Overall metrics: Profit/Loss, Day change, Portfolio cost and value.
   - If you provide a CSV file with all the portfolio transactions, in the same format as Directa's "Movimenti" CSV (example included), then you also get: Money-Weighted Return Rate, expenses, # of trades, positions, and the total deposited / total withdrawn funds up to date.
 - For each asset you own, you get: type (equity / bonds / commodity / money market), ticker, full name, qty, average cost, current price, current value and portfolio share (useful for periodical re-balancing), overall and daily profit/loss.
@@ -15,7 +15,7 @@ Please read the `#comments` in the topmost part of the script to find detailed a
 - Runs on Windows Powershell 5.1 and Powershell 7.
 
 # Why?
-This exists because I love [Ticker](https://github.com/achannarasappa/ticker), but i wanted some more information on screen.
+This exists because I really love [Ticker](https://github.com/achannarasappa/ticker), but i wanted some more information on screen.
 
 And also because I wanted to verify if all the hype on "vibe coding" meant something...  
 Oh well actually it did!  
@@ -39,7 +39,5 @@ It could fail with crypto, stocks, bonds, and other asset classes which are not 
 
 ### 2. Vibe coding is not fail-proof
 This was 98% built by the free version of Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
-So there might be some bugs here and there.  
-Feel free to open a new Issue.  
+So there might be some bugs here and there: feel free to open a new Issue if you spot any.  
 I am not an experienced developer, I only build small scripts to fit my needs, but I am willing to have my published stuff working good and nicely polished too.  
-Thank you!
