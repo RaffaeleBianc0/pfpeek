@@ -8,7 +8,7 @@ Please read the `#comments` in the topmost part of the script to find detailed a
 - Graphical display of your portfolio performance today, and since a custom date.
 - The portfolio assets can be read from a CSV exported from Directa (italian broker), or manually inputed in the `$manualAssets` splatted variable, with quantity and average price.
 - Overall metrics: Profit/Loss, Day change, Portfolio cost and value.
-  - If you provide the Directa CSV with all the portfolio transactions, then you also get info on Money-weighted Return Rate, expenses, # of trades, positions, and the total deposited / total withdrawn funds up to date.
+  - If you provide a CSV file with all the portfolio transactions, in the same format as Directa's "Movimenti" CSV (example included), then you also get: Money-Weighted Return Rate, expenses, # of trades, positions, and the total deposited / total withdrawn funds up to date.
 - For each asset you own, you get: type (equity / bonds / commodity / money market), ticker, full name, qty, average cost, current price, current value and portfolio share (useful for periodical re-balancing), overall and daily profit/loss.
 - The output partially adapts to the console window size. Tall is better; fullscreen is even better. Try also with different font sizes (usually <kbd>Ctrl</kbd>+mousewheel works).
 - Current assets market data is retrieved from the web.
@@ -27,6 +27,9 @@ So I decided to add stuff I missed, to get the same information i like to see in
 - cosmetic changes done manually, because I am a f'ing perfectionist sometimes
 
 ... and after 38 iterations/releases (this is why I'm starting with v1.38 here), all done in small free time spans, I feel confident enough to release it here.  
+
+# Suggestions are welcome
+Feel free to open an Issue here to share some ideas on any enhancement you may find useful.
 
 # Disclaimers
 ### 1. This was built for my own needs
