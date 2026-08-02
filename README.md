@@ -15,7 +15,7 @@ Please read the `#comments` in the topmost part of the script to find detailed a
 - Runs on Windows Powershell 5.1 and Powershell 7.
 
 # Why?
-This exists because I really love [Ticker](https://github.com/achannarasappa/ticker), but i wanted some more information on screen.
+This exists because I really love many TUI apps, including [Ticker](https://github.com/achannarasappa/ticker), but i wanted some more information on screen.
 
 And also because I wanted to verify if all the hype on "vibe coding" meant something...  
 Oh well actually it did!  
