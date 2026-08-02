@@ -36,7 +36,7 @@ It could fail with crypto, stocks, bonds, and other asset classes which are not 
 
 ### 2. Vibe coding is not fail-proof
 This was 98% built by the free version of these AI models: Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
-So please expect errors.  
-Feel free to open a new Issue if you can.  
+So there might be some bugs here and there.  
+Feel free to open a new Issue.  
 I am not an experienced developer, I only build small scripts to fit my needs, but I am willing to have my published stuff working good and nicely polished too.  
 Thank you!
