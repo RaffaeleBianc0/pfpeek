@@ -34,10 +34,10 @@ Feel free to open an Issue here to share some ideas on any enhancement you may f
 # Disclaimers
 ### 1. This was built for my own needs
 I invest in Italy, buying only ETFs for the long run.  
-So I picked the data I needed to show on screen, and ignored some other data.  
-It could fail with crypto, stocks, bonds, and other asset classes which are not ETFs... but I didn't test these. Give it a try!
+So I picked the data I wanted to see on my screen, and ignored some other data.  
+It could fail with crypto, stocks, bonds, and other asset classes which are not ETFs... but I didn't test this. Give it a try!
 
 ### 2. Vibe coding is not fail-proof
-This was 98% built by the free version of Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
+This was 95% built by the free version of Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
 So there might be some bugs here and there: feel free to open a new Issue if you spot any.  
 I am not an experienced developer, I only build small scripts to fit my needs, but I am willing to have my published stuff working good and nicely polished too. *Form is function!*
