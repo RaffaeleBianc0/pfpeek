@@ -1,6 +1,6 @@
 # pfpeek
 
-<img alt="pfpeek" src="https://github.com/user-attachments/assets/cd7514f4-560b-49a6-bc2c-75651200fd0e" />
+<img alt="pfpeek" src="https://github.com/user-attachments/assets/983393df-78d7-4da8-bf93-f706ebf5b67c" />
 
 > [!NOTE]
 > **Please read the `#comments` in the topmost part of the script to find detailed and updated information.**
