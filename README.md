@@ -16,13 +16,13 @@
 - Runs on Windows Powershell 5.1 and Powershell 7.
 
 # Why?
-This exists because I really love many TUI apps, including [Ticker](https://github.com/achannarasappa/ticker), but i wanted some more information on screen.
+This exists because I love [Ticker](https://github.com/achannarasappa/ticker) (and many other TUI apps indeed), but i wanted some more information on screen.
 
 And also because I wanted to verify if all the hype on "vibe coding" meant something...  
 Oh well actually it did!  
-It all started playfully: I dropped a screenshot of Ticker in Claude, asking to build a Powershell script which could give me the same output, "let's see if something happens"...  
+It all started playfully, dropping a Ticker screenshot in Claude, asking it to build a Powershell script which could give me the same output, "let's see if something happens"...  
 2 minutes later I had the same output I have in Ticker!  
-So I decided to add small enhancements that I missed from Ticker, to get the same information i like to see in my Yahoo Finance dashboard, but in my beloved terminal:  
+So I decided to add the enhancements that I missed from Ticker, to get the same information i like to see in my Yahoo Finance dashboard, but in my beloved terminal:  
 - the graphs  
 - the CSV parsing feature  
 - cosmetic changes done manually, because I am a f'ing perfectionist sometimes
@@ -30,7 +30,7 @@ So I decided to add small enhancements that I missed from Ticker, to get the sam
 ... and 38 iterations/releases later (this is why I'm starting with v1.38 here), all done in small free time spans, I feel confident enough to release it here.  
 
 # Suggestions are welcome
-Feel free to open an Issue here to share some ideas on any enhancement you may find useful, or bugs you may spot.
+Feel free to open an Issue here to share some ideas on any enhancement you may find useful, or any bug you may spot.
 
 # Disclaimers
 ### 1. This was built for my own needs
