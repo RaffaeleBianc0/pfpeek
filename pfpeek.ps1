@@ -20,7 +20,7 @@
     |_|      |_|
 
     AUTHOR: Raffaele Bianco
-    VERSION: 1.46 (2026-08-03)
+    VERSION: 1.47 (2026-08-03)
     BLOG POST: https://www.raffaelebianco.it/blog/p/pfpeek/
     CHANGELOG:
         * v1.38 (2026-07-28):
@@ -47,9 +47,9 @@
         * v1.46 (2026-08-03):
             - TWRR previously failed silently (empty summary field, no warning) whenever it could not be computed. Get-TwrrRobust now emits a descriptive Write-Warning at every point it returns $null (missing/too-short historical "custom" series, non-positive value base at start/mid/end, invalid cumulative factor). Also warns upfront, listing by ticker, when the historical "Since <date>" download failed for one or more currently held assets - the most likely reason the custom series ends up empty and TWRR gets skipped entirely.
             - Renamed "rbPfPeek" to "pfpeek".
-    TODO:
-        - When $useCsvPortfolio = $true, then change $startDateConfig to match the oldest transaction found in the CSV.
-        - Calculate and print also the realized gains (due to closed positions).
+        * v1.47 (2026-08-03):
+            - When $useCsvPortfolio = $true, $startDateConfig is now automatically aligned to the oldest transaction found in the CSV, so the "since" chart/metrics always match the real investment history.
+            - Added realized gains: proceeds from sales minus the average-cost basis of the sold shares, summed across every ticker with at least one sale (covers fully closed positions as well as partial sells within positions that are still open). Shown in the portfolio metrics block and logged in the TSV log as RealizedGain.
 #>
 
 
@@ -78,9 +78,7 @@ $manualAssets = @(
     @{ Ticker = "WGLD.MI"; AvgCost = 261.57; Qty = 3.00 }
     @{ Ticker = "XEON.MI"; AvgCost = 144.22; Qty = 35.00 }
 )
-
-# Custom start date for the second chart (you should put your first investment date here)
-$startDateConfig = "05/08/2024"
+$startDateConfig = "05/08/2024" # Custom start date for the second chart (you should put your first investment date here)
 # --- CONFIGURATION ENDS HERE -----------------------------------------------
 
 
@@ -265,7 +263,7 @@ if ($useCsvPortfolio) {
         if ([string]::IsNullOrWhiteSpace($ticker)) { continue }
 
         if (-not $positions.ContainsKey($ticker)) {
-            $positions[$ticker] = @{ BoughtQty = 0.0; BoughtCost = 0.0; SoldQty = 0.0 }
+            $positions[$ticker] = @{ BoughtQty = 0.0; BoughtCost = 0.0; SoldQty = 0.0; SoldValue = 0.0 }
         }
 
         $qty = ConvertTo-ItalianDouble $m.Quantita
@@ -274,7 +272,7 @@ if ($useCsvPortfolio) {
         switch ($m.TipoOperazione) {
             "Acquisto"    { $positions[$ticker].BoughtQty  += $qty; $positions[$ticker].BoughtCost += [math]::Abs($importo) }
             "Commissioni" { $positions[$ticker].BoughtCost += [math]::Abs($importo) }
-            "Vendita"     { $positions[$ticker].SoldQty    += $qty }
+            "Vendita"     { $positions[$ticker].SoldQty    += $qty; $positions[$ticker].SoldValue += [math]::Abs($importo) }
             default { }
         }
     }
@@ -349,6 +347,17 @@ if ($csvMetricsAvailable) {
     $totalOpenPositions   = $assets.Count
     $totalClosedPositions   = $totalTickersTraded - $totalOpenPositions
 
+    # Realized gains: proceeds from sales minus the average-cost basis of the
+    # sold shares, summed across every ticker with at least one sale (covers
+    # both fully closed positions and partial sells within still-open ones).
+    $totalRealizedGain = 0.0
+    foreach ($ticker in $positions.Keys) {
+        $p = $positions[$ticker]
+        if ($p.SoldQty -le 0) { continue }
+        $avgCostForSold = if ($p.BoughtQty -gt 0) { $p.BoughtCost / $p.BoughtQty } else { 0.0 }
+        $totalRealizedGain += $p.SoldValue - ($p.SoldQty * $avgCostForSold)
+    }
+
     $buyDates = @()
     foreach ($m in $movimenti) {
         if ($m.TipoOperazione -eq 'Acquisto') {
@@ -359,7 +368,13 @@ if ($csvMetricsAvailable) {
         }
     }
     $firstInvestmentDate = if ($buyDates.Count -gt 0) { ($buyDates | Sort-Object)[0] } else { $null }
-    
+
+    # Align $startDateConfig with the oldest transaction found in the CSV,
+    # so the "since" chart/metrics always match the actual investment history.
+    if ($firstInvestmentDate) {
+        $startDateConfig = $firstInvestmentDate.ToString('dd/MM/yyyy')
+    }
+
     # 1. Breakdown investment duration into "y M d", "M d", or "d"
     $investmentDurationFormatted = "0d"
     if ($firstInvestmentDate) {
@@ -1308,7 +1323,7 @@ $outputBuffer = [System.Text.StringBuilder]::new()
 $null = $outputBuffer.Append("$ESC[2J$ESC[H")
 
 # A. INTRADAY Chart Block
-$null = $outputBuffer.AppendLine("${White}Portfolio performance - Today${Reset}")
+$null = $outputBuffer.AppendLine("${White}Portfolio performance today${Reset}")
 
 $intraFirstVal = $portfolioPrevCloseValue
 $intraLastVal = if ($portfolioIntradayFiltered.Count -gt 0) { $portfolioIntradayFiltered[-1] } else { 0 }
@@ -1353,7 +1368,7 @@ $null = $outputBuffer.AppendLine(" ${Gray}${intradayTimelineRow}${Reset}")
 $null = $outputBuffer.AppendLine("-" * $consoleWidth)
 
 # D. Custom Historical Chart Block
-$null = $outputBuffer.AppendLine("${White}Portfolio performance - Since ${startDateConfig}${Reset}")
+$null = $outputBuffer.AppendLine("${White}Portfolio performance since ${startDateConfig}${Reset}")
 $cFirstVal = if ($portfolioCustom.Count -gt 0) { $portfolioCustom[0] } else { 0 }
 $cLastVal = if ($portfolioCustom.Count -gt 0) { $portfolioCustom[-1] } else { 0 }
 $cChartColor = Get-TrendColor ($cLastVal - $cFirstVal)
@@ -1401,8 +1416,8 @@ $totCostStr = Format-NumberLocalized $totalCost 2
 $s1 = "Day change: ${dcColor}$(Get-TrendArrow $totalDayChange) $totDayChangeStr ($totDayChangePctStr%)$Reset"
 $s1b = $twrrStr
 $s2 = $mwrrStr
-$s3 = "P/L: ${tcColor}$(Get-TrendArrow $totalChange) $totChangeStr ($totChangePctStr%)$Reset"
-$s4 = "=  Value ${White}$totValueStr$Reset - Cost ${White}$totCostStr$Reset"
+$s3 = "P/L: ${tcColor}$(Get-TrendArrow $totalChange) $totChangeStr ($totChangePctStr%)${Reset}"
+$s4 = "=  ${Gray}Value ${White}$totValueStr${Reset} - ${Gray}Cost ${White}$totCostStr${Reset}"
 
 Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $s1", $s1b, $s2, $s3, $s4) -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  "
 
@@ -1434,8 +1449,13 @@ if ($csvMetricsAvailable) {
     $m6 = "${Gray}First invest:${Reset} ${White}${firstInvestStr}${Reset} (${White}${investmentDurationFormatted} ago${Reset})"
     $m7 = "${Gray}Deposited:${Reset} ${White}$totDepStr${Reset}  ${Gray}Withdrawn:${Reset} ${White}$totWithStr${Reset}"
 
+    $realizedGainSign = if ($totalRealizedGain -gt 0) { "+" } else { "" }
+    $realizedGainStr = $realizedGainSign + (Format-NumberLocalized $totalRealizedGain 2)
+    $realizedGainColor = Get-TrendColor $totalRealizedGain
+    $m8 = "${Gray}Realized gains:${Reset} ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
+
     Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", "= $m3") -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent "  "
-    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m7) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m7, $m8) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
 
     $null = $outputBuffer.AppendLine("-" * $consoleWidth)
 }
@@ -1468,6 +1488,7 @@ try {
         DaysInvested      = if ($csvMetricsAvailable) { $investmentDurationFormatted } else { "" }
         Deposited         = if ($csvMetricsAvailable) { $totalDeposited.ToString('F2', $ic) } else { "" }
         Withdrawn         = if ($csvMetricsAvailable) { $totalWithdrawn.ToString('F2', $ic) } else { "" }
+        RealizedGain      = if ($csvMetricsAvailable) { $totalRealizedGain.ToString('F2', $ic) } else { "" }
     }
 
     if (-not (Test-Path $logPath)) {
