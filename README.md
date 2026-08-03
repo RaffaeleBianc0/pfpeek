@@ -42,3 +42,6 @@ It could fail with crypto, stocks, bonds, and other asset classes which are not 
 This was 95% built by the free versions of Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
 So there might be some bugs here and there.  
 I am not an experienced developer, I only build small scripts to fit my needs, but I am willing to have my published stuff working good and nicely polished too.
+
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I3I5MBHBZ)
