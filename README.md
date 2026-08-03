@@ -38,6 +38,6 @@ So I picked the data I wanted to see on my screen, and ignored some other data.
 It could fail with crypto, stocks, bonds, and other asset classes which are not ETFs... but I didn't test this. Give it a try!
 
 ### 2. Vibe coding is not fail-proof
-This was 95% built by the free version of Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
+This was 95% built by the free versions of Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
 So there might be some bugs here and there.  
 I am not an experienced developer, I only build small scripts to fit my needs, but I am willing to have my published stuff working good and nicely polished too.
