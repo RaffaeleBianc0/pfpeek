@@ -3,6 +3,12 @@
     Portfolio performance report for Powershell terminal.
 
 .DESCRIPTION
+           __               _
+     _ __ / _|_ __  ___ ___| |__
+    | '_ \  _| '_ \/ -_) -_) / /
+    | .__/_| | .__/\___\___|_\_\
+    |_|      |_|
+
     Retrieves real-time and historical financial data from Yahoo Finance or local CSV exports, calculates portfolio performance metrics, and renders sparkline charts and tables.
     FEATURES:
         * Real-time and historical portfolio tracking via Yahoo Finance.
@@ -13,14 +19,8 @@
         * Automated TSV logging of portfolio performance statistics.
 
 .NOTES
-           __               _
-     _ __ / _|_ __  ___ ___| |__
-    | '_ \  _| '_ \/ -_) -_) / /
-    | .__/_| | .__/\___\___|_\_\
-    |_|      |_|
-
     AUTHOR: Raffaele Bianco
-    VERSION: 1.47 (2026-08-03)
+    VERSION: 1.48 (2026-08-03)
     BLOG POST: https://www.raffaelebianco.it/blog/p/pfpeek/
     CHANGELOG:
         * v1.38 (2026-07-28):
@@ -50,6 +50,10 @@
         * v1.47 (2026-08-03):
             - When $useCsvPortfolio = $true, $startDateConfig is now automatically aligned to the oldest transaction found in the CSV, so the "since" chart/metrics always match the real investment history.
             - Added realized gains: proceeds from sales minus the average-cost basis of the sold shares, summed across every ticker with at least one sale (covers fully closed positions as well as partial sells within positions that are still open). Shown in the portfolio metrics block and logged in the TSV log as RealizedGain.
+        * v1.48 (2026-08-03):
+            - Dynamic calculation of fixed rows and available chart height based on actual UI content and console width.
+            - Removed "+" sign from positive absolute values while keeping it for percentages and retaining "-" for negative values.
+            - Added $logFolder configuration variable with write-access verification.
 #>
 
 
@@ -79,6 +83,11 @@ $manualAssets = @(
     @{ Ticker = "XEON.MI"; AvgCost = 144.22; Qty = 35.00 }
 )
 $startDateConfig = "05/08/2024" # Custom start date for the second chart (you should put your first investment date here)
+
+# Logging folder configuration:
+#   - If $null, saves the TSV log in the same folder as the script.
+#   - Otherwise, saves it in the specified folder path.
+$logFolder = $null
 # --- CONFIGURATION ENDS HERE -----------------------------------------------
 
 
@@ -91,6 +100,31 @@ if ($consoleWidth -lt $minWidth) {
     Write-Warning "Console window is too narrow ($consoleWidth chars)."
     Write-Warning "Minimum width required: $minWidth chars."
     Write-Warning "Please increase the console width (or decrease the font size) and try again."
+    exit
+}
+
+# --- LOG FOLDER WRITE ACCESS CHECK ---
+$targetLogDir = if ($null -ne $logFolder -and $logFolder.Trim() -ne "") {
+    $logFolder
+} else {
+    if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+}
+
+if (-not (Test-Path $targetLogDir)) {
+    try {
+        [void][System.IO.Directory]::CreateDirectory($targetLogDir)
+    } catch {
+        Write-Error "ERROR: Cannot create log directory '$targetLogDir': $_"
+        exit
+    }
+}
+
+try {
+    $testFile = Join-Path $targetLogDir ([System.IO.Path]::GetRandomFileName())
+    [System.IO.File]::WriteAllText($testFile, "test")
+    [System.IO.File]::Delete($testFile)
+} catch {
+    Write-Error "ERROR: No write access to the log folder '$targetLogDir': $_"
     exit
 }
 
@@ -1112,12 +1146,6 @@ $widthThreshold2 = 140
 # Minimum height for each chart (in rows) to keep them readable/significant
 $minChartHeight = 3
 
-$assetRowMultiplier = if ($consoleWidth -lt 130) { 4 } else { 3 } 
-$metricsRows = if ($csvMetricsAvailable) { if ($consoleWidth -ge $widthThreshold2) { 3 } else { 5 } } else { 0 }
-$fixedRows = 10 + $metricsRows + ($assets.Count * $assetRowMultiplier)
-$availableHeightForCharts = $consoleHeight - $fixedRows
-$calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
-
 # Custom Portfolio Calculations
 $portfolioCustom = @()
 $customCount = $customData.Values | ForEach-Object { $_.Count } | Measure-Object -Min
@@ -1158,13 +1186,6 @@ $currentStepLimit = [math]::Max(1, [math]::Min($currentStepLimit, $intradaySteps
 
 $portfolioIntradayFiltered = $portfolioIntraday[0..$currentStepLimit]
 $intradayRatio = $currentStepLimit / ($intradaySteps - 1)
-
-# Chart Generation
-$intradayChartRows = Get-BrailleSparkline -values $portfolioIntradayFiltered -height $calculatedChartHeight -targetWidth $targetChartWidth -visibleRatio $intradayRatio
-$intradayTimelineRow = Get-IntradayTimelineRow -targetWidth $targetChartWidth
-
-$customChartRows = Get-BrailleSparkline -values $portfolioCustom -height $calculatedChartHeight -targetWidth $targetChartWidth -Filled
-$customTimelineRow = Get-YearlyTimelineRow -timestamps $customTimestamps -targetWidth $targetChartWidth
 
 # Real-time Metrics
 $portfolio = @()
@@ -1248,6 +1269,31 @@ function Format-NumberLocalized ($value, $decimals = 2) {
     return $intPart
 }
 
+# --- DYNAMIC FIXED ROWS & CHART HEIGHT CALCULATION ---
+# Estimate how many lines each section will consume based on current metrics and console width
+$fixedRows = 0
+$fixedRows += 2 # Intraday header + timeline
+$fixedRows += 2 # Custom header + timeline
+$fixedRows += 1 # Separator line
+$fixedRows += 1 # Summary block header/rows (estimated ~1-2 rows depending on wrapping)
+if ($csvMetricsAvailable) {
+    $fixedRows += 2 # Portfolio metrics rows (estimated 2 rows of wrapped segments)
+    $fixedRows += 1 # Separator line
+}
+if ($consoleWidth -lt 130) { $fixedRows += ($assets.Count * 4) }
+else                       { $fixedRows += ($assets.Count * 3) }
+    
+
+$availableHeightForCharts = $consoleHeight - $fixedRows
+$calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
+
+# Chart Generation with Dynamic Height
+$intradayChartRows = Get-BrailleSparkline -values $portfolioIntradayFiltered -height $calculatedChartHeight -targetWidth $targetChartWidth -visibleRatio $intradayRatio
+$intradayTimelineRow = Get-IntradayTimelineRow -targetWidth $targetChartWidth
+
+$customChartRows = Get-BrailleSparkline -values $portfolioCustom -height $calculatedChartHeight -targetWidth $targetChartWidth -Filled
+$customTimelineRow = Get-YearlyTimelineRow -timestamps $customTimestamps -targetWidth $targetChartWidth
+
 # --- CONSOLE PRINTING (BUFFERED OUTPUT TO PREVENT FLICKER) ---
 $ESC = [char]27
 $Green = "$ESC[92m"
@@ -1329,7 +1375,7 @@ $intraFirstVal = $portfolioPrevCloseValue
 $intraLastVal = if ($portfolioIntradayFiltered.Count -gt 0) { $portfolioIntradayFiltered[-1] } else { 0 }
 $intraChartColor = Get-TrendColor ($intraLastVal - $intraFirstVal)
 
-# Prepend "+" to positive percentage values
+# Prepend "+" to positive percentage values, remove "+" from positive absolute values
 $intraChangePct = $totalDayChangePct
 $pctSign = if ($intraChangePct -gt 0) { "+" } elseif ($intraChangePct -lt 0) { "" } else { "" }
 $pctColor = Get-TrendColor $intraChangePct
@@ -1338,8 +1384,8 @@ $cleanPctStr = "$pctSign$(Format-NumberLocalized $intraChangePct 2)%"
 
 $intraDelta = $totalDayChange
 $deltaColor = Get-TrendColor $intraDelta
-$deltaSign = if ($intraDelta -gt 0) { "+" } else { "" }
-$deltaValueStr = $deltaSign + (Format-NumberLocalized $intraDelta 2)
+$deltaSign = if ($intraDelta -lt 0) { "-" } else { "" }
+$deltaValueStr = $deltaSign + (Format-NumberLocalized ([math]::Abs($intraDelta)) 2)
 
 $cleanNowStr = "Now: " + $deltaValueStr + " (" + $cleanPctStr + ")"
 
@@ -1401,14 +1447,14 @@ if ($csvMetricsAvailable -and $null -ne $mwrr) {
     $mwrrStr = ""
 }
 
-$totDayChangeSign = if ($totalDayChange -gt 0) { "+" } else { "" }
+$totDayChangeSign = if ($totalDayChange -lt 0) { "-" } else { "" }
 $totDayChangePctSign = if ($totalDayChangePct -gt 0) { "+" } else { "" }
-$totChangeSign = if ($totalChange -gt 0) { "+" } else { "" }
+$totChangeSign = if ($totalChange -lt 0) { "-" } else { "" }
 $totChangePctSign = if ($totalChangePct -gt 0) { "+" } else { "" }
 
-$totDayChangeStr = $totDayChangeSign + (Format-NumberLocalized $totalDayChange 2)
+$totDayChangeStr = $totDayChangeSign + (Format-NumberLocalized ([math]::Abs($totalDayChange)) 2)
 $totDayChangePctStr = $totDayChangePctSign + (Format-NumberLocalized $totalDayChangePct 2)
-$totChangeStr = $totChangeSign + (Format-NumberLocalized $totalChange 2)
+$totChangeStr = $totChangeSign + (Format-NumberLocalized ([math]::Abs($totalChange)) 2)
 $totChangePctStr = $totChangePctSign + (Format-NumberLocalized $totalChangePct 2)
 $totValueStr = Format-NumberLocalized $totalValue 2
 $totCostStr = Format-NumberLocalized $totalCost 2
@@ -1449,8 +1495,8 @@ if ($csvMetricsAvailable) {
     $m6 = "${Gray}First invest:${Reset} ${White}${firstInvestStr}${Reset} (${White}${investmentDurationFormatted} ago${Reset})"
     $m7 = "${Gray}Deposited:${Reset} ${White}$totDepStr${Reset}  ${Gray}Withdrawn:${Reset} ${White}$totWithStr${Reset}"
 
-    $realizedGainSign = if ($totalRealizedGain -gt 0) { "+" } else { "" }
-    $realizedGainStr = $realizedGainSign + (Format-NumberLocalized $totalRealizedGain 2)
+    $realizedGainSign = if ($totalRealizedGain -lt 0) { "-" } else { "" }
+    $realizedGainStr = $realizedGainSign + (Format-NumberLocalized ([math]::Abs($totalRealizedGain)) 2)
     $realizedGainColor = Get-TrendColor $totalRealizedGain
     $m8 = "${Gray}Realized gains:${Reset} ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
 
@@ -1462,8 +1508,7 @@ if ($csvMetricsAvailable) {
 
 # --- LOG APPEND: TSV log with header row creation if missing ---
 try {
-    $logDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-    $logPath = Join-Path $logDir "pfpeek-log.tsv"
+    $logPath = Join-Path $targetLogDir "pfpeek-log.tsv"
     $ic = [System.Globalization.CultureInfo]::InvariantCulture
 
     $logStats = [ordered]@{
@@ -1546,12 +1591,12 @@ foreach ($item in $portfolio) {
 
     $gainPctSign = if ($item.GainPct -gt 0) { "+" } else { "" }
     $dayPctSign = if ($item.DayChangePct -gt 0) { "+" } else { "" }
-    $gainSign = if ($item.Gain -gt 0) { "+" } else { "" }
-    $daySign = if ($item.DayChangeTotal -gt 0) { "+" } else { "" }
+    $gainSign = if ($item.Gain -lt 0) { "-" } else { "" }
+    $daySign = if ($item.DayChangeTotal -lt 0) { "-" } else { "" }
 
-    $gainStr = $gainSign + (Format-NumberLocalized $item.Gain 2)
+    $gainStr = $gainSign + (Format-NumberLocalized ([math]::Abs($item.Gain)) 2)
     $gainPctStr = $gainPctSign + (Format-NumberLocalized $item.GainPct 2)
-    $dayStr = $daySign + (Format-NumberLocalized $item.DayChangeTotal 2)
+    $dayStr = $daySign + (Format-NumberLocalized ([math]::Abs($item.DayChangeTotal)) 2)
     $dayPctStr = $dayPctSign + (Format-NumberLocalized $item.DayChangePct 2)
 
     if ($useSingleRowAssetLayout) {
