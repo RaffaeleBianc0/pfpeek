@@ -26,10 +26,10 @@ So I decided to add small enhancements that I missed from Ticker, to get the sam
 - the CSV parsing feature  
 - cosmetic changes done manually, because I am a f'ing perfectionist sometimes
 
-... and after 38 iterations/releases (this is why I'm starting with v1.38 here), all done in small free time spans, I feel confident enough to release it here.  
+... and 38 iterations/releases later (this is why I'm starting with v1.38 here), all done in small free time spans, I feel confident enough to release it here.  
 
 # Suggestions are welcome
-Feel free to open an Issue here to share some ideas on any enhancement you may find useful.
+Feel free to open an Issue here to share some ideas on any enhancement you may find useful, or bugs you may spot.
 
 # Disclaimers
 ### 1. This was built for my own needs
@@ -39,5 +39,5 @@ It could fail with crypto, stocks, bonds, and other asset classes which are not 
 
 ### 2. Vibe coding is not fail-proof
 This was 95% built by the free version of Claude, Gemini, Deepseek, and a bit of Qwen run locally.  
-So there might be some bugs here and there: feel free to open a new Issue if you spot any.  
+So there might be some bugs here and there.  
 I am not an experienced developer, I only build small scripts to fit my needs, but I am willing to have my published stuff working good and nicely polished too.
