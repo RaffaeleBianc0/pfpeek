@@ -11,17 +11,18 @@
 
     Retrieves real-time and historical financial data from Yahoo Finance or local CSV exports, calculates portfolio performance metrics, and renders sparkline charts and tables.
     FEATURES:
-        * Real-time and historical portfolio tracking via Yahoo Finance.
+        * Real-time and historical portfolio tracking.
         * Automatic integration with Directa Trading CSV export.
         * Adaptive console layout with dynamic text wrapping.
         * Braille-based sparkline charts for intraday and long-term performance.
         * Comprehensive financial metrics including XIRR/MWRR, expenses, and trades breakdown.
-        * Automated TSV logging of portfolio performance statistics.
+        * Automated TSV logging of portfolio performance statistics on each run.
 
 .NOTES
     AUTHOR: Raffaele Bianco
-    VERSION: 1.48 (2026-08-03)
+    VERSION: 1.49 (2026-08-04)
     BLOG POST: https://www.raffaelebianco.it/blog/p/pfpeek/
+    GITHUB REPO: https://github.com/RaffaeleBianc0/pfpeek
     CHANGELOG:
         * v1.38 (2026-07-28):
             - First published release
@@ -51,9 +52,10 @@
             - When $useCsvPortfolio = $true, $startDateConfig is now automatically aligned to the oldest transaction found in the CSV, so the "since" chart/metrics always match the real investment history.
             - Added realized gains: proceeds from sales minus the average-cost basis of the sold shares, summed across every ticker with at least one sale (covers fully closed positions as well as partial sells within positions that are still open). Shown in the portfolio metrics block and logged in the TSV log as RealizedGain.
         * v1.48 (2026-08-03):
-            - Dynamic calculation of fixed rows and available chart height based on actual UI content and console width.
             - Removed "+" sign from positive absolute values while keeping it for percentages and retaining "-" for negative values.
             - Added $logFolder configuration variable with write-access verification.
+        * v1.49 (2026-08-04):
+            - Small fixes on the adaptive layout logic.
 #>
 
 
@@ -1141,7 +1143,6 @@ Step-Progress "Rendering output"
 $consoleHeight = 40
 if ($Host.UI.RawUI.WindowSize.Height) { $consoleHeight = $Host.UI.RawUI.WindowSize.Height }
 $targetChartWidth = $consoleWidth - 2
-$widthThreshold2 = 140
 
 # Minimum height for each chart (in rows) to keep them readable/significant
 $minChartHeight = 3
@@ -1269,20 +1270,30 @@ function Format-NumberLocalized ($value, $decimals = 2) {
     return $intPart
 }
 
-# --- DYNAMIC FIXED ROWS & CHART HEIGHT CALCULATION ---
+# --- FIXED ROWS & CHART HEIGHT CALCULATION ---
 # Estimate how many lines each section will consume based on current metrics and console width
 $fixedRows = 0
-$fixedRows += 2 # Intraday header + timeline
-$fixedRows += 2 # Custom header + timeline
-$fixedRows += 1 # Separator line
-$fixedRows += 1 # Summary block header/rows (estimated ~1-2 rows depending on wrapping)
+# Graphs block:
+$fixedRows += 4 # Performance today header + Prev/Now + timeline + separator
+$fixedRows += 3 # Performance since header + timeline + separator
+# Summary block:
+$fixedRows += 2 # Minimum, when console is wide enough and $useCsvPortfolio=$false
 if ($csvMetricsAvailable) {
-    $fixedRows += 2 # Portfolio metrics rows (estimated 2 rows of wrapped segments)
-    $fixedRows += 1 # Separator line
-}
-if ($consoleWidth -lt 130) { $fixedRows += ($assets.Count * 4) }
-else                       { $fixedRows += ($assets.Count * 3) }
+    if     ($consoleWidth -lt 105 ) { $fixedRows += 6 }
+    elseif ($consoleWidth -lt 121 ) { $fixedRows += 4 }
+    elseif ($consoleWidth -lt 170 ) { $fixedRows += 3 }
+    else                            { $fixedRows += 2 }
     
+}
+elseif (-not $csvMetricsAvailable) {
+    if ($consoleWidth -lt 95 ) { $fixedRows += 1 }
+}
+# Assets table block:
+if ($consoleWidth -lt 136)     { $fixedRows += ($assets.Count * 4) }
+elseif ($consoleWidth -lt 193) { $fixedRows += ($assets.Count * 3) }
+else                           { $fixedRows += ($assets.Count * 2) }
+# One more row for elaborated PSPrompts:
+$fixedRows += 1
 
 $availableHeightForCharts = $consoleHeight - $fixedRows
 $calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
@@ -1502,9 +1513,9 @@ if ($csvMetricsAvailable) {
 
     Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", "= $m3") -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent "  "
     Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m7, $m8) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
-
-    $null = $outputBuffer.AppendLine("-" * $consoleWidth)
 }
+
+$null = $outputBuffer.AppendLine("-" * $consoleWidth)
 
 # --- LOG APPEND: TSV log with header row creation if missing ---
 try {
