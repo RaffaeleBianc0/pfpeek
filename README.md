@@ -22,16 +22,16 @@
 
 
 
-# ❓ Why?
-This project exists because I love [Ticker](https://github.com/achannarasappa/ticker) and wanted even more detailed data right on my screen.
+# ❓ Why
+This project exists because I love [Ticker](https://github.com/achannarasappa/ticker) and wanted some more details right on my screen.
 
 It was also a fun test to see if all the hype around **"vibe coding"** held up...  
 *Spoiler: It actually did!* 🚀
 
 It all started as an experiment: dropping a Ticker screenshot into Claude and asking it to write a PowerShell script to replicate the view (*"let's see what happens..."*).  
-⏱️ **2 minutes later**, I had a working clone!
+2 minutes later, I had a working draft!
 
-From there, I decided to build in all the missing features I enjoy in Yahoo Finance web interface, bringing them directly to my beloved terminal:
+From there, I decided to bring in some of the missing features I enjoy in Yahoo Finance web interface directly to my beloved terminal:
 - 📉 Performance charts
 - 📄 Directa CSV parsing and historical metrics
 - 🎨 Fine-tuned cosmetic tweaks *(because I'm a f'ing perfectionist sometimes)*
