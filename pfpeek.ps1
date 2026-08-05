@@ -20,10 +20,12 @@
 
 .NOTES
     AUTHOR:      Raffaele Bianco
-    VERSION:     1.52 (2026-08-05)
+    VERSION:     1.53 (2026-08-05)
     BLOG POST:   https://www.raffaelebianco.it/blog/p/pfpeek/
     GITHUB REPO: https://github.com/RaffaeleBianc0/pfpeek
     CHANGELOG:
+        * v1.53 (2026-08-05):
+            - Sparkline graph added for each asset.
         * v1.52 (2026-08-05):
             - TWRR calculation fixed.
             - Small cosmetic fixes.
@@ -1333,9 +1335,10 @@ if ($missingCustomTickers.Count -gt 0) {
 # closed positions still contributed real value while they were held.
 $allTradedFullTickers = @($positions.Keys | Where-Object { $positions[$_].BoughtQty -gt 0 } | ForEach-Object { "$_$tickerSuffix" })
 $missingTwrrTickers = @($allTradedFullTickers | Where-Object { -not $priceSeriesByTicker.ContainsKey($_) })
+$skipTwrrDueToMissingData = $false
 if ($missingTwrrTickers.Count -gt 0) {
-    Write-Warning "TWRR: no historical 'Since $startDateConfig' data returned for: $($missingTwrrTickers -join ', ') (open or since-closed positions). Reconstructed historical portfolio values will miss/understate their contribution; if ALL traded tickers are missing, TWRR will be skipped entirely."
-    # TODO: if we are here, then do not calculate and print TWRR in output at all.
+    Write-Warning "TWRR: no historical 'Since $startDateConfig' data returned for: $($missingTwrrTickers -join ', ') (open or since-closed positions). Reconstructed historical portfolio values will miss/understate their contribution; TWRR output will be skipped to avoid misleading results."
+    $skipTwrrDueToMissingData = $true
 }
 
 if ($minCustom -gt 0) {
@@ -1418,7 +1421,7 @@ $totalDayChangePct = if (($totalValue - $totalDayChange) -ne 0) { ($totalDayChan
 # TWRR CALCULATION (computed before $cashflows is mutated below for MWRR)
 # ============================================================
 $twrr = $null
-if ($csvMetricsAvailable) {
+if ($csvMetricsAvailable -and -not $skipTwrrDueToMissingData) {
     $currentCashValue = Get-CashBalanceAtUnix ((New-Object DateTimeOffset ([DateTime]::Today)).ToUnixTimeSeconds()) $cashHistory
     $twrr = Get-TwrrRobust $cashflows $qtyHistory $priceSeriesByTicker $tickerSuffix $customStartUnix ($totalValue + $currentCashValue) ([DateTime]::Today) $cashHistory
 }
@@ -1792,6 +1795,20 @@ foreach ($item in $portfolio) {
     $dayStr = $daySign + (Format-NumberLocalized ([math]::Abs($item.DayChangeTotal)) 2)
     $dayPctStr = $dayPctSign + (Format-NumberLocalized $item.DayChangePct 2)
 
+    $placeholderPlText = "${Gray}P/L:${Reset} {0}   ${Gray}Day:${Reset} {1}   " -f "$(Get-TrendArrow $item.Gain) $gainStr ($gainPctStr%)", "$(Get-TrendArrow $item.DayChangeTotal) $dayStr ($dayPctStr%)"
+    $basePlLength = Get-VisibleLength($placeholderPlText)
+    $graphWidth = [math]::Min(10, [math]::Max(1, $consoleWidth - $basePlLength - 2))
+    if ($graphWidth -lt 1) { $graphWidth = 1 }
+
+    $dailyGraph = [char]0x2800
+    if ($intradayData.ContainsKey($item.Ticker) -and $intradayData[$item.Ticker].Count -gt 1) {
+        $graphChar = Get-BrailleSparkline -values $intradayData[$item.Ticker] -height 1 -targetWidth $graphWidth
+        if ($graphChar -is [array] -and $graphChar.Count -gt 0) { $graphChar = $graphChar[0] }
+        if (-not [string]::IsNullOrEmpty($graphChar)) { $dailyGraph = $graphChar }
+    }
+    $graphColor = Get-TrendColor $item.DayChangeTotal
+    $graph = "${graphColor}${dailyGraph}${Reset}"
+
     if ($useSingleRowAssetLayout) {
         # Single row per asset format for very wide consoles, aligned with max description length
         $descPart = "{0} {1} {2}" -f $labelFormatted, "${White}$($item.Ticker)${Reset}", "${Gray}$($item.Name)${Reset}"
@@ -1807,7 +1824,7 @@ foreach ($item in $portfolio) {
         $coloredGain = "${gainColor}${rawGainText}${Reset}"
         $coloredDay  = "${dcColor}${rawDayText}${Reset}"
 
-        $plPart = "${Gray}P/L:${Reset} $coloredGain   ${Gray}Day:${Reset} $coloredDay"
+        $plPart = "${Gray}P/L:${Reset} $coloredGain   ${Gray}Day:${Reset} $coloredDay   $graph"
 
         Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @("$descPart$paddingStr$metricsPart", $plPart) -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  "
     } else {
@@ -1825,7 +1842,7 @@ foreach ($item in $portfolio) {
         $coloredGain = "${gainColor}${gainFormatted}${Reset}"
         $coloredDay  = "${dcColor}${dayFormatted}${Reset}"
 
-        $plString = "${Gray}P/L:${Reset} ${coloredGain}   ${Gray}Day:${Reset} $coloredDay"
+        $plString = "${Gray}P/L:${Reset} ${coloredGain}   ${Gray}Day:${Reset} $coloredDay   $graph"
 
         Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @($posRow, $plString) -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  "
     }
