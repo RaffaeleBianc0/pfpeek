@@ -10,15 +10,15 @@
 - 📂 **Flexible input:** Assets can be read automatically from a CSV file or defined via the `$manualAssets` variable, complete with quantity and average price.
 - 📈 **Overall metrics:** Profit/Loss, Day change, Portfolio cost, and Current value.
 - 📋 **Directa Integration:** Place a "Movimenti" CSV export file from Directa (a sample file is included) in the script directory to unlock:
-  - 💰 *Money-Weighted Return Rate (MWRR)* & *Time-Weighted Rate of Return (TWRR)*
+  - 💰 Money-Weighted Return Rate (MWRR) & Time-Weighted Return Rate (TWRR)
   - 💸 Total expenses & number of trades
   - 📊 Open and closed positions summary
   - 🔄 Total deposited and withdrawn funds to date
   - 💵 Realized gains from closed and partial positions
 - 🔍 **Asset breakdown:** For each portfolio asset, view its type (*Equity, Bonds, Commodity, Money Market*), ticker, full name, quantity, average cost, current price, current value, weight %, and individual P/L (overall & daily).
-- 🖥️ **Adaptive console layout:** Dynamic text wrapping designed for terminal windows. *Tall is better to fit all output without scrolling; fullscreen is ideal.* Try adjusting font sizes (<kbd>Ctrl</kbd> + mousewheel).
+- 🖥️ **Adaptive console layout:** Dynamic text wrapping designed for terminal windows. Tall is better to fit all output without scrolling; fullscreen is ideal. Try also adjusting font size (usually <kbd>Ctrl</kbd> + mousewheel works).
 - 🌐 **Real-time data:** Fetches live market quotes directly from the web.
-- 💻 **Cross-platform PowerShell support:** Runs smoothly on modern Windows 10/11 environments, fully compatible with both **PowerShell 5.1** and **PowerShell 7+**.
+- 💻 **Cross-platform PowerShell support:** Runs smoothly on modern Win10/11 environments, compatible with both **PowerShell 5.1** and **PowerShell 7+**.
 
 
 
