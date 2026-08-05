@@ -19,48 +19,58 @@
         * Automated TSV logging of portfolio performance statistics on each run.
 
 .NOTES
-    AUTHOR: Raffaele Bianco
-    VERSION: 1.49 (2026-08-04)
-    BLOG POST: https://www.raffaelebianco.it/blog/p/pfpeek/
+    AUTHOR:      Raffaele Bianco
+    VERSION:     1.52 (2026-08-05)
+    BLOG POST:   https://www.raffaelebianco.it/blog/p/pfpeek/
     GITHUB REPO: https://github.com/RaffaeleBianc0/pfpeek
     CHANGELOG:
-        * v1.38 (2026-07-28):
-            - First published release
-        * v1.39 (2026-07-29):
-            - Adaptive layout: no data is truncated or separated from its label; when an element doesn't fit the console width, it wraps entirely. Charts have a minimum configurable height ($minChartHeight).
-        * v1.40 (2026-07-29):
-            - Appends a log row to .\pfpeek-log.tsv on each run.
+        * v1.52 (2026-08-05):
+            - TWRR calculation fixed.
+            - Small cosmetic fixes.
+        * v1.51 (2026-08-04):
+            - The "Parsing CSV transactions" progress step now shows the CSV filename being parsed, highlighted in white.
+        * v1.50 (2026-08-04):
+            - TWRR now reconstructs the ACTUAL historical position size held on each cash-flow date (from the Acquisto/Vendita history in the CSV) instead of approximating with today's quantities applied to historical closes. 
+            That approximation silently dropped any position that has since been fully closed out - e.g. a since-sold ETF that was a large chunk of the portfolio on a past cash-flow date - which could make a sub-period's value base look far too low (even negative/zero, wrongly triggering "wipeout" skips) right after a withdrawal that the real portfolio easily absorbed. 
+            Historical closes are now fetched for every ticker ever traded (open or since closed), not just currently-held ones, and Get-TwrrRobust values each cash-flow date from real per-ticker quantities via the new Get-QtyHistory/Get-QtyAtUnix/Get-HistoricalPortfolioValue helpers. 
+            The "Since <date>" custom chart is intentionally left on the old fast approximation (it's just a sparkline), so a separate warning now distinguishes chart-data gaps from TWRR-data gaps.
+        * v1.49 (2026-08-04):
+            - Small fixes on the adaptive layout logic.
+        * v1.48 (2026-08-03):
+            - Removed "+" sign from positive absolute values while keeping it for percentages and retaining "-" for negative values.
+            - Added $logFolder configuration variable with write-access verification.
+        * v1.47 (2026-08-03):
+            - When $useCsvPortfolio = $true, $startDateConfig is now automatically aligned to the oldest transaction found in the CSV, so the "since" chart/metrics always match the real investment history.
+            - Added realized gains: proceeds from sales minus the average-cost basis of the sold shares, summed across every ticker with at least one sale (covers fully closed positions as well as partial sells within positions that are still open). Shown in the portfolio metrics block and logged in the TSV log as RealizedGain.
+        * v1.46 (2026-08-03):
+            - TWRR previously failed silently (empty summary field, no warning) whenever it could not be computed. Get-TwrrRobust now emits a descriptive Write-Warning at every point it returns $null (missing/too-short historical "custom" series, non-positive value base at start/mid/end, invalid cumulative factor). Also warns upfront, listing by ticker, when the historical "Since <date>" download failed for one or more currently held assets - the most likely reason the custom series ends up empty and TWRR gets skipped entirely.
+            - Renamed "rbPfPeek" to "pfpeek".
+        * v1.45 (2026-08-03):
+            - Fixed TWRR being systematically (and often wrongly) negative. Root cause was a sign bug in the portfolio-side cash-flow conversion. Deposits/withdrawals are true external flows, so flipping their investor-side sign to get the portfolio-side impact is correct; but costs (commissions, stamp duty, withholding tax) are NOT external to the portfolio the way deposits are - they leave the account directly, so they must keep the SAME sign for the portfolio as for the investor (a reduction), not the opposite one. The old code flipped costs' sign too, which made every cost event look like a deposit, inflating the value base after each one and dragging the compounded return down (even into negative territory). Cash flows now carry a Type (External vs Cost) so Get-TwrrRobust applies the correct sign per type.
+        * v1.44 (2026-07-31):
+            - Added TWRR (Time-Weighted Rate of Return) calculation, displayed just before MWRR in the summary row and logged alongside it in the TSV log. TWRR chains sub-period returns between each external cash flow (deposits/withdrawals/costs), using the same historical valuation basis as the custom performance chart (current quantities applied to historical closes), so contribution/withdrawal timing no longer distorts the return the way MWRR does by design.
+        * v1.43 (2026-07-31):
+            - More granular progress bar when starting the script.
+        * v1.42 (2026-07-31):
+            - Rewrote the adaptive line-wrapping engine: it now measures the true visible width of each element (ignoring any ANSI color escape sequence, not just SGR codes), skips empty elements so no stray separators are printed, and always wraps whole elements to a new line, never splitting one across lines.
+            - Applied the new wrapping engine consistently to the portfolio metrics block and to both individual-asset display modes (multi-row and adaptive single-row).
         * v1.41 (2026-07-29):
             - Automatically create TSV log file with header row if it is created for the first time.
             - Prepend "+" to positive percentage values.
             - Enhanced column alignment for numeric values >= 100000.
             - Adaptive single-row asset display mode for wide consoles based on maximum asset description length.
             - Dynamic breakdown of investment duration into "y M d", "M d", or "d".
-        * v1.42 (2026-07-31):
-            - Rewrote the adaptive line-wrapping engine: it now measures the true visible width of each element (ignoring any ANSI color escape sequence, not just SGR codes), skips empty elements so no stray separators are printed, and always wraps whole elements to a new line, never splitting one across lines.
-            - Applied the new wrapping engine consistently to the portfolio metrics block and to both individual-asset display modes (multi-row and adaptive single-row).
-        * v1.43 (2026-07-31):
-            - More granular progress bar when starting the script.
-        * v1.44 (2026-07-31):
-            - Added TWRR (Time-Weighted Rate of Return) calculation, displayed just before MWRR in the summary row and logged alongside it in the TSV log. TWRR chains sub-period returns between each external cash flow (deposits/withdrawals/costs), using the same historical valuation basis as the custom performance chart (current quantities applied to historical closes), so contribution/withdrawal timing no longer distorts the return the way MWRR does by design.
-        * v1.45 (2026-08-03):
-            - Fixed TWRR being systematically (and often wrongly) negative. Root cause was a sign bug in the portfolio-side cash-flow conversion. Deposits/withdrawals are true external flows, so flipping their investor-side sign to get the portfolio-side impact is correct; but costs (commissions, stamp duty, withholding tax) are NOT external to the portfolio the way deposits are - they leave the account directly, so they must keep the SAME sign for the portfolio as for the investor (a reduction), not the opposite one. The old code flipped costs' sign too, which made every cost event look like a deposit, inflating the value base after each one and dragging the compounded return down (even into negative territory). Cash flows now carry a Type (External vs Cost) so Get-TwrrRobust applies the correct sign per type.
-        * v1.46 (2026-08-03):
-            - TWRR previously failed silently (empty summary field, no warning) whenever it could not be computed. Get-TwrrRobust now emits a descriptive Write-Warning at every point it returns $null (missing/too-short historical "custom" series, non-positive value base at start/mid/end, invalid cumulative factor). Also warns upfront, listing by ticker, when the historical "Since <date>" download failed for one or more currently held assets - the most likely reason the custom series ends up empty and TWRR gets skipped entirely.
-            - Renamed "rbPfPeek" to "pfpeek".
-        * v1.47 (2026-08-03):
-            - When $useCsvPortfolio = $true, $startDateConfig is now automatically aligned to the oldest transaction found in the CSV, so the "since" chart/metrics always match the real investment history.
-            - Added realized gains: proceeds from sales minus the average-cost basis of the sold shares, summed across every ticker with at least one sale (covers fully closed positions as well as partial sells within positions that are still open). Shown in the portfolio metrics block and logged in the TSV log as RealizedGain.
-        * v1.48 (2026-08-03):
-            - Removed "+" sign from positive absolute values while keeping it for percentages and retaining "-" for negative values.
-            - Added $logFolder configuration variable with write-access verification.
-        * v1.49 (2026-08-04):
-            - Small fixes on the adaptive layout logic.
+        * v1.40 (2026-07-29):
+            - Appends a log row to .\pfpeek-log.tsv on each run.
+        * v1.39 (2026-07-29):
+            - Adaptive layout: no data is truncated or separated from its label; when an element doesn't fit the console width, it wraps entirely. Charts have a minimum configurable height ($minChartHeight).
+        * v1.38 (2026-07-28):
+            - First published release.
 #>
 
 
 
-# --- CONFIGURATION STARTS HERE ---------------------------------------------
+# === CONFIGURATION STARTS HERE =============================================
 # Choose the portfolio source:
 #   $true  -> rebuilds it by reading the "Movimenti" CSV export from Directa Trading
 #   $false -> uses the static $manualAssets list below
@@ -88,9 +98,8 @@ $startDateConfig = "05/08/2024" # Custom start date for the second chart (you sh
 
 # Logging folder configuration:
 #   - If $null, saves the TSV log in the same folder as the script.
-#   - Otherwise, saves it in the specified folder path.
-$logFolder = $null
-# --- CONFIGURATION ENDS HERE -----------------------------------------------
+$logFolder = $null   # Common alternative: $env:TEMP
+# === CONFIGURATION ENDS HERE ===============================================
 
 
 
@@ -135,7 +144,8 @@ function Show-Progress {
     param (
         [int]$Current,
         [int]$Total,
-        [string]$Activity = "Processing"
+        [string]$Activity = "Processing",
+        [string]$Highlight = $null
     )
 
     if ($Total -le 0) { return }
@@ -155,7 +165,12 @@ function Show-Progress {
     Write-Host $Total.ToString($padFormat) -ForegroundColor White -NoNewline
     Write-Host " " -NoNewline
     Write-Host "$bar" -ForegroundColor White -NoNewline
-    Write-Host " $Activity" -ForegroundColor Cyan
+    Write-Host " $Activity" -ForegroundColor Cyan -NoNewline
+    if ($Highlight) {
+        Write-Host " " -NoNewline
+        Write-Host $Highlight -ForegroundColor White -NoNewline
+    }
+    Write-Host ""
 
     # If completed, print newline
     if ($Current -ge $Total) { Write-Host "" }
@@ -168,9 +183,10 @@ $script:currentStep = 0
 
 # Auto-incrementing wrapper around Show-Progress: keeps step numbering sequential
 # and lets us report more granular, descriptive sub-steps as they actually happen.
-function Step-Progress ($Activity) {
+# $Highlight (optional) is appended to the activity text in white, e.g. a filename.
+function Step-Progress ($Activity, $Highlight = $null) {
     $script:currentStep++
-    Show-Progress $script:currentStep $totalSteps $Activity
+    Show-Progress $script:currentStep $totalSteps $Activity $Highlight
 }
 
 # --- STEP 1: INITIALIZING & PREREQUISITES CHECK ---
@@ -268,7 +284,7 @@ if ($useCsvPortfolio) {
         return $val
     }
 
-    Step-Progress "Parsing CSV transactions"
+    Step-Progress "Parsing CSV transactions" (Split-Path $csvPath -Leaf)
 
     # 3. Read CSV and find the transaction header row
     $csvLines = Get-Content -Path $csvPath -Encoding UTF8
@@ -580,11 +596,104 @@ if ($csvMetricsAvailable) {
     # TWRR (TIME-WEIGHTED RATE OF RETURN) CALCULATION
     # Unlike MWRR, TWRR neutralizes the effect of deposit/withdrawal timing by
     # chaining sub-period returns computed between each external cash flow.
-    # Portfolio valuations at each cash-flow date are approximated the same way
-    # as the "Since <date>" custom chart: current holdings' quantities applied
-    # to their historical closes. This is consistent with the rest of the script,
-    # though it does not reconstruct actual historical position sizes.
+    # Portfolio valuations at each cash-flow date are reconstructed from the
+    # ACTUAL position size held on that date (built from the Acquisto/Vendita
+    # history in the CSV), applied to each ticker's historical close nearest
+    # that date - including tickers that have since been fully closed out.
+    # This is intentionally more accurate than (and independent of) the
+    # "Since <date>" custom chart, which still uses current quantities applied
+    # to historical closes as a fast approximation for the on-screen sparkline.
     # ============================================================
+
+    # Builds, per raw CSV ticker (no market suffix), a chronological list of
+    # @{ DateUnix; Qty } checkpoints: the cumulative quantity held immediately
+    # after each Acquisto/Vendita transaction. Used to look up the exact
+    # quantity held on any given historical date (a simple step function).
+    function Get-QtyHistory ($transactions) {
+        $parsed = New-Object System.Collections.Generic.List[PSCustomObject]
+        foreach ($m in $transactions) {
+            if ($m.TipoOperazione -ne 'Acquisto' -and $m.TipoOperazione -ne 'Vendita') { continue }
+            if ([string]::IsNullOrWhiteSpace($m.Ticker)) { continue }
+            $d = [DateTime]::MinValue
+            if (-not [DateTime]::TryParseExact($m.DataOperazione, "dd-MM-yyyy", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$d)) { continue }
+            $qty = ConvertTo-ItalianDouble $m.Quantita
+            $parsed.Add([PSCustomObject]@{ Ticker = $m.Ticker; Date = $d; Delta = if ($m.TipoOperazione -eq 'Acquisto') { $qty } else { -$qty } })
+        }
+
+        $history = @{}
+        $running = @{}
+        foreach ($t in ($parsed | Sort-Object Date)) {
+            if (-not $running.ContainsKey($t.Ticker)) { $running[$t.Ticker] = 0.0 }
+            $running[$t.Ticker] += $t.Delta
+            if (-not $history.ContainsKey($t.Ticker)) { $history[$t.Ticker] = New-Object System.Collections.Generic.List[PSCustomObject] }
+            $history[$t.Ticker].Add([PSCustomObject]@{ DateUnix = (New-Object DateTimeOffset ($t.Date)).ToUnixTimeSeconds(); Qty = $running[$t.Ticker] })
+        }
+        return $history
+    }
+
+    function Get-CashHistory ($transactions) {
+        $history = New-Object System.Collections.Generic.List[PSCustomObject]
+        $idx = 0
+        foreach ($m in $transactions) {
+            $d = [DateTime]::MinValue
+            if (-not [DateTime]::TryParseExact($m.DataOperazione, "dd-MM-yyyy", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$d)) {
+                continue
+            }
+
+            $amount = ConvertTo-ItalianDouble $m.ImportoEuro
+            switch ($m.TipoOperazione) {
+                "Conferimento con bonifico" { $delta = [math]::Abs($amount); $type = "External" }
+                "Prelievo bonifico"         { $delta = -[math]::Abs($amount); $type = "External" }
+                "Commissioni"               { $delta = -[math]::Abs($amount); $type = "Cost" }
+                "Bollo portafoglio titoli*" { $delta = -[math]::Abs($amount); $type = "Cost" }
+                "Rit. etf"                  { $delta = -[math]::Abs($amount); $type = "Cost" }
+                "Acquisto"                  { $delta = -[math]::Abs($amount); $type = "Internal" }
+                "Vendita"                   { $delta = [math]::Abs($amount); $type = "Internal" }
+                default                      { continue }
+            }
+
+            $history.Add([PSCustomObject]@{ DateUnix = (New-Object DateTimeOffset ($d)).ToUnixTimeSeconds(); Delta = $delta; Type = $type; Index = $idx })
+            $idx++
+        }
+
+        $sorted = $history | Sort-Object DateUnix, Index
+        if ($sorted.Count -gt 0) {
+            $firstTimestamp = $sorted[0].DateUnix
+            $sameDayPoints = $sorted | Where-Object { $_.DateUnix -eq $firstTimestamp }
+            $hasExternalOnFirstDate = $sameDayPoints | Where-Object { $_.Type -eq 'External' }
+            if (-not $hasExternalOnFirstDate) {
+                $netFirstDayDelta = ($sameDayPoints | Measure-Object -Property Delta -Sum).Sum
+                if ($netFirstDayDelta -lt 0) {
+                    $implicitDeposit = -$netFirstDayDelta
+                    $sorted = @([PSCustomObject]@{ DateUnix = $firstTimestamp; Delta = $implicitDeposit; Type = 'External'; Index = -1 }) + $sorted
+                }
+            }
+        }
+
+        return [System.Collections.Generic.List[PSCustomObject]]$sorted
+    }
+
+    function Get-CashBalanceAtUnix ($targetUnix, $cashHistory) {
+        if (-not $cashHistory -or $cashHistory.Count -eq 0) { return 0.0 }
+        $balance = 0.0
+        foreach ($point in $cashHistory) {
+            if ($point.DateUnix -gt $targetUnix) { break }
+            $balance += $point.Delta
+        }
+        return $balance
+    }
+
+    # Quantity actually held in $ticker at $targetUnix: the running total as of
+    # the latest checkpoint on or before that date (0 if before the first buy).
+    function Get-QtyAtUnix ($tickerHistory, $targetUnix) {
+        if (-not $tickerHistory -or $tickerHistory.Count -eq 0) { return 0.0 }
+        $qty = 0.0
+        foreach ($point in $tickerHistory) {
+            if ($point.DateUnix -gt $targetUnix) { break }
+            $qty = $point.Qty
+        }
+        return $qty
+    }
 
     # Finds the index of the closest available timestamp to $targetUnix
     function Get-NearestCustomIndex ($targetUnix, $timestamps) {
@@ -598,19 +707,36 @@ if ($csvMetricsAvailable) {
         return $bestIdx
     }
 
-    function Get-TwrrRobust ($externalFlows, $valueSeries, $timestamps, $windowStartUnix, $endValue, $endDate) {
-        if (-not $valueSeries -or $valueSeries.Count -lt 2 -or -not $timestamps -or $timestamps.Count -lt 2) {
-            Write-Warning "TWRR: skipped - historical 'custom' price series unavailable or too short (points: $(if ($valueSeries) { $valueSeries.Count } else { 0 }), timestamps: $(if ($timestamps) { $timestamps.Count } else { 0 })). Likely a failed/rate-limited Yahoo Finance download for one or more held tickers."
+    # True historical portfolio value at $targetUnix: sums, over every ticker
+    # ever traded (open or since closed), the quantity actually held on that
+    # date times its closing price nearest that date.
+    function Get-HistoricalPortfolioValue ($targetUnix, $qtyHistory, $priceSeriesByTicker, $tickerSuffix, $cashHistory) {
+        $total = 0.0
+        foreach ($fullTicker in $priceSeriesByTicker.Keys) {
+            $rawTicker = if ($fullTicker.EndsWith($tickerSuffix)) { $fullTicker.Substring(0, $fullTicker.Length - $tickerSuffix.Length) } else { $fullTicker }
+            $qty = Get-QtyAtUnix $qtyHistory[$rawTicker] $targetUnix
+            if ($qty -le 0) { continue }
+            $series = $priceSeriesByTicker[$fullTicker]
+            $idx = Get-NearestCustomIndex $targetUnix $series.Timestamps
+            if ($idx -lt 0 -or $idx -ge $series.Closes.Count) { continue }
+            $total += ([double]$series.Closes[$idx]) * $qty
+        }
+        $total += Get-CashBalanceAtUnix $targetUnix $cashHistory
+        return $total
+    }
+
+    function Get-TwrrRobust ($externalFlows, $qtyHistory, $priceSeriesByTicker, $tickerSuffix, $windowStartUnix, $endValue, $endDate, $cashHistory) {
+        if (-not $priceSeriesByTicker -or $priceSeriesByTicker.Keys.Count -eq 0) {
+            Write-Warning "TWRR: skipped - no historical price series available for any traded ticker. Likely a failed/rate-limited Yahoo Finance download."
             return $null
         }
 
-        $numPoints = [math]::Min($valueSeries.Count, $timestamps.Count)
-        $periodStartValue = [double]$valueSeries[0]
+        $periodStartValue = Get-HistoricalPortfolioValue $windowStartUnix $qtyHistory $priceSeriesByTicker $tickerSuffix $cashHistory
         if ($periodStartValue -le 0) {
-            Write-Warning "TWRR: skipped - initial portfolio value in the historical series is zero or negative ($periodStartValue)."
+            Write-Warning "TWRR: skipped - reconstructed initial portfolio value is zero or negative ($periodStartValue)."
             return $null
         }
-        $periodStartDate = ([DateTimeOffset]::FromUnixTimeSeconds([int64]$timestamps[0])).LocalDateTime.Date
+        $periodStartDate = ([DateTimeOffset]::FromUnixTimeSeconds([int64]$windowStartUnix)).LocalDateTime.Date
 
         $cumulativeFactor = 1.0
         $sortedFlows = @($externalFlows | Sort-Object Date)
@@ -619,11 +745,11 @@ if ($csvMetricsAvailable) {
             $cfUnix = (New-Object DateTimeOffset ($cf.Date)).ToUnixTimeSeconds()
             if ($cfUnix -lt $windowStartUnix) { continue } # flow predates the historical window; can't isolate it
 
-            $idx = Get-NearestCustomIndex $cfUnix $timestamps
-            if ($idx -lt 0 -or $idx -ge $numPoints) { continue }
-
-            $valueBeforeFlow = [double]$valueSeries[$idx]
-            $cumulativeFactor *= ($valueBeforeFlow / $periodStartValue)
+            $valueAtFlow = Get-HistoricalPortfolioValue $cfUnix $qtyHistory $priceSeriesByTicker $tickerSuffix $cashHistory
+            $portfolioFlow = if ($cf.Type -eq "Cost") { $cf.Amount } else { -$cf.Amount }
+            $valueBeforeFlow = $valueAtFlow - $portfolioFlow
+            $ratio = if ($periodStartValue -ne 0) { $valueBeforeFlow / $periodStartValue } else { [double]::NaN }
+            $cumulativeFactor *= $ratio
 
             # External flows (deposits/withdrawals) move money between investor and
             # portfolio, so the portfolio-side impact is the OPPOSITE sign of the
@@ -634,8 +760,8 @@ if ($csvMetricsAvailable) {
             # the SAME direction as the investor-side amount. Sign-flipping them
             # here (as an earlier version did) makes every cost event look like a
             # deposit, inflating the value base and dragging TWRR down artificially.
-            $portfolioFlow = if ($cf.Type -eq "Cost") { $cf.Amount } else { -$cf.Amount }
             $periodStartValue = $valueBeforeFlow + $portfolioFlow
+            # Write-Host "TWRR debug: next periodStartValue=$periodStartValue"
             if ($periodStartValue -le 0) {
                 Write-Warning "TWRR: skipped - sub-period value base hit zero/negative ($periodStartValue) after cash flow on $($cf.Date.ToString('dd/MM/yyyy')) (Type: $($cf.Type), Amount: $($cf.Amount)). Can't chain returns past a wipeout."
                 return $null
@@ -657,6 +783,17 @@ if ($csvMetricsAvailable) {
 
         return ([math]::Pow($cumulativeFactor, 365.0 / $totalDays) - 1.0)
     }
+
+    # Quantity-history for every raw CSV ticker (needed to reconstruct true
+    # historical position sizes for TWRR - see Get-TwrrRobust above), and the
+    # list of tickers that have since been FULLY closed out (sold to zero) but
+    # still need their own historical price series fetched, since they
+    # contributed real value to the portfolio for part of the period and are
+    # NOT included in $assets (which only holds currently open positions).
+    $qtyHistory = Get-QtyHistory $movimenti
+    $cashHistory = Get-CashHistory $movimenti
+    $openTickersRaw = @($assets | ForEach-Object { $_.Ticker.Substring(0, $_.Ticker.Length - $tickerSuffix.Length) })
+    $closedTickers = @($positions.Keys | Where-Object { ($openTickersRaw -notcontains $_) -and ($positions[$_].BoughtQty -gt 0) } | ForEach-Object { "$_$tickerSuffix" })
     # ============================================================
 }
 
@@ -1067,7 +1204,13 @@ try {
     }
 
     # Run the worker script block once per asset, in parallel, via a runspace pool.
-    $throttleLimit = [math]::Max(1, [math]::Min(8, $assets.Count))
+    # Tickers in $closedTickers (fully sold out, so no longer in $assets) ride
+    # along on the SAME pool/worker: they still need their own historical price
+    # series so Get-TwrrRobust can reconstruct what the portfolio was actually
+    # worth while those positions were still open (see $qtyHistory above). They
+    # don't need real-time quotes, just the "custom" history the worker already
+    # fetches, so a synthetic AvgCost=0 asset is enough.
+    $throttleLimit = [math]::Max(1, [math]::Min(8, $assets.Count + $closedTickers.Count))
     $runspacePool = [runspacefactory]::CreateRunspacePool(1, $throttleLimit)
     $runspacePool.Open()
 
@@ -1077,6 +1220,25 @@ try {
         $psInstance.RunspacePool = $runspacePool
         [void]$psInstance.AddScript($assetWorkerScript).AddParameters(@{
             asset            = $asset
+            webSession       = $webSession
+            customStartUnix  = $customStartUnix
+            nowUnix          = $nowUnix
+            today            = $today
+            dateParsed       = $dateParsed
+            startTime        = $startTime
+            stepInterval     = $stepInterval
+            intradaySteps    = $intradaySteps
+        })
+        $pendingJobs += [PSCustomObject]@{
+            Pipe   = $psInstance
+            Handle = $psInstance.BeginInvoke()
+        }
+    }
+    foreach ($closedTicker in $closedTickers) {
+        $psInstance = [powershell]::Create()
+        $psInstance.RunspacePool = $runspacePool
+        [void]$psInstance.AddScript($assetWorkerScript).AddParameters(@{
+            asset            = @{ Ticker = $closedTicker; AvgCost = 0.0 }
             webSession       = $webSession
             customStartUnix  = $customStartUnix
             nowUnix          = $nowUnix
@@ -1110,11 +1272,20 @@ try {
     $globalTimestamps = $null
     $yearlyTimestamps = $null
     $customTimestamps = $null
+    # Per-ticker (open AND closed) historical price series, each keeping its
+    # own timestamps - used by Get-TwrrRobust to reconstruct true historical
+    # portfolio values. Unlike $customData/$customTimestamps below (which only
+    # cover currently-open tickers and collapse onto a single shared timeline
+    # for the on-screen "since" chart), this is the accurate, per-ticker basis.
+    $priceSeriesByTicker = @{}
 
     foreach ($r in $parallelResults) {
         $t = $r.Ticker
         if ($r.CustomCloses)     { $customData[$t]     = $r.CustomCloses }
         if ($r.AlignedIntraday)  { $intradayData[$t]   = $r.AlignedIntraday }
+        if ($r.CustomCloses -and $r.CustomTimestamps) {
+            $priceSeriesByTicker[$t] = @{ Timestamps = $r.CustomTimestamps; Closes = $r.CustomCloses }
+        }
 
         if (-not $globalTimestamps -and $r.GlobalTimestamps) { $globalTimestamps = $r.GlobalTimestamps }
         if (-not $yearlyTimestamps -and $r.YearlyTimestamps) { $yearlyTimestamps = $r.YearlyTimestamps }
@@ -1154,7 +1325,17 @@ $minCustom = $customCount.Minimum
 
 $missingCustomTickers = @($assets | Where-Object { -not $customData.ContainsKey($_.Ticker) } | ForEach-Object { $_.Ticker })
 if ($missingCustomTickers.Count -gt 0) {
-    Write-Warning "TWRR/custom chart: no historical 'Since $startDateConfig' data returned for: $($missingCustomTickers -join ', '). Their contribution falls back to a flat AvgCost line; if ALL held tickers are missing, TWRR will be skipped entirely."
+    Write-Warning "Custom chart: no historical 'Since $startDateConfig' data returned for: $($missingCustomTickers -join ', '). Their contribution falls back to a flat AvgCost line."
+}
+
+# TWRR draws on $priceSeriesByTicker, which covers every ticker EVER traded
+# (open positions AND ones since fully closed out) - not just $assets - since
+# closed positions still contributed real value while they were held.
+$allTradedFullTickers = @($positions.Keys | Where-Object { $positions[$_].BoughtQty -gt 0 } | ForEach-Object { "$_$tickerSuffix" })
+$missingTwrrTickers = @($allTradedFullTickers | Where-Object { -not $priceSeriesByTicker.ContainsKey($_) })
+if ($missingTwrrTickers.Count -gt 0) {
+    Write-Warning "TWRR: no historical 'Since $startDateConfig' data returned for: $($missingTwrrTickers -join ', ') (open or since-closed positions). Reconstructed historical portfolio values will miss/understate their contribution; if ALL traded tickers are missing, TWRR will be skipped entirely."
+    # TODO: if we are here, then do not calculate and print TWRR in output at all.
 }
 
 if ($minCustom -gt 0) {
@@ -1238,7 +1419,8 @@ $totalDayChangePct = if (($totalValue - $totalDayChange) -ne 0) { ($totalDayChan
 # ============================================================
 $twrr = $null
 if ($csvMetricsAvailable) {
-    $twrr = Get-TwrrRobust $cashflows $portfolioCustom $customTimestamps $customStartUnix $totalValue ([DateTime]::Today)
+    $currentCashValue = Get-CashBalanceAtUnix ((New-Object DateTimeOffset ([DateTime]::Today)).ToUnixTimeSeconds()) $cashHistory
+    $twrr = Get-TwrrRobust $cashflows $qtyHistory $priceSeriesByTicker $tickerSuffix $customStartUnix ($totalValue + $currentCashValue) ([DateTime]::Today) $cashHistory
 }
 # ============================================================
 
@@ -1289,11 +1471,11 @@ elseif (-not $csvMetricsAvailable) {
     if ($consoleWidth -lt 95 ) { $fixedRows += 1 }
 }
 # Assets table block:
-if ($consoleWidth -lt 136)     { $fixedRows += ($assets.Count * 4) }
+if     ($consoleWidth -lt 136) { $fixedRows += ($assets.Count * 4) }
 elseif ($consoleWidth -lt 193) { $fixedRows += ($assets.Count * 3) }
 else                           { $fixedRows += ($assets.Count * 2) }
-# One more row for elaborated PSPrompts:
-$fixedRows += 1
+# Some space for elaborated PS Prompts at the bottom of the screen:
+$fixedRows += 2
 
 $availableHeightForCharts = $consoleHeight - $fixedRows
 $calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
@@ -1444,7 +1626,7 @@ if ($csvMetricsAvailable -and $null -ne $twrr) {
     $twrrColor = Get-TrendColor $twrr
     $twrrPctVal = $twrr * 100
     $twrrSign = if ($twrrPctVal -gt 0) { "+" } else { "" }
-    $twrrStr = "TWRR: ${twrrColor}$(Get-TrendArrow $twrr) ${twrrSign}$(Format-NumberLocalized $twrrPctVal 2)% annual${Reset}"
+    $twrrStr = "TWRR: ${twrrColor}${twrrSign}$(Format-NumberLocalized $twrrPctVal 2)% ${Reset}annual"
 } else {
     $twrrStr = ""
 }
@@ -1453,7 +1635,7 @@ if ($csvMetricsAvailable -and $null -ne $mwrr) {
     $mwrrColor = Get-TrendColor $mwrr
     $mwrrPctVal = $mwrr * 100
     $mwrrSign = if ($mwrrPctVal -gt 0) { "+" } else { "" }
-    $mwrrStr = "MWRR: ${mwrrColor}$(Get-TrendArrow $mwrr) ${mwrrSign}$(Format-NumberLocalized $mwrrPctVal 2)% annual${Reset}"
+    $mwrrStr = "MWRR: ${mwrrColor}${mwrrSign}$(Format-NumberLocalized $mwrrPctVal 2)% ${Reset}annual"
 } else {
     $mwrrStr = ""
 }
@@ -1474,9 +1656,9 @@ $s1 = "Day change: ${dcColor}$(Get-TrendArrow $totalDayChange) $totDayChangeStr 
 $s1b = $twrrStr
 $s2 = $mwrrStr
 $s3 = "P/L: ${tcColor}$(Get-TrendArrow $totalChange) $totChangeStr ($totChangePctStr%)${Reset}"
-$s4 = "=  ${Gray}Value ${White}$totValueStr${Reset} - ${Gray}Cost ${White}$totCostStr${Reset}"
+$s4 = "= ${Gray}Value ${White}$totValueStr${Reset} - ${Gray}Cost ${White}$totCostStr${Reset}"
 
-Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $s1", $s1b, $s2, $s3, $s4) -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  "
+Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $s1 ", " $s1b ", " $s2 ", " $s3", "$s4") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "  "
 
 # E-bis. Portfolio Metrics (Responsive layout)
 if ($csvMetricsAvailable) {
@@ -1511,7 +1693,7 @@ if ($csvMetricsAvailable) {
     $realizedGainColor = Get-TrendColor $totalRealizedGain
     $m8 = "${Gray}Realized gains:${Reset} ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
 
-    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", "= $m3") -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent "  "
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", "= $m3") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "  "
     Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m7, $m8) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
 }
 
