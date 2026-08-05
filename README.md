@@ -28,7 +28,7 @@ This project exists because I love [Ticker](https://github.com/achannarasappa/ti
 It was also a fun test to see if all the hype around **"vibe coding"** held up...  
 *Spoiler: It actually did!* 🚀
 
-It all started as an experiment: dropping a Ticker screenshot into Claude and asking it to write a PowerShell script to replicate the view (*"let's see what happens..."*).  
+It all started as an experiment: dropping a Ticker screenshot into Claude and asking it to write a PowerShell script to replicate the view, *"let's see what happens..."*  
 2 minutes later, I had a working draft!
 
 From there, I decided to bring in some of the missing features I enjoy in Yahoo Finance web interface directly to my beloved terminal:
