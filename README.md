@@ -46,14 +46,8 @@ Feel free to open an **Issue** to share ideas for new features, improvements, or
 
 
 
-# ⚠️ Disclaimers
-
-### 1. Built for my own workflow
+# ⚠️ Disclaimer
 I invest in Italy, holding long-term ETFs only.  
 The metrics displayed reflect the specific data points I care about daily. It *might* work with crypto, individual stocks, or bonds, but it hasn't been tested for those asset classes yet — give it a try!
-
-### 2. Vibe coding is not bulletproof
-About 95% of this codebase was generated using free tiers of *Claude, Gemini, DeepSeek*, and a locally hosted *Qwen* model.  
-While I am not a professional developer, I write small scripts for my own tools and am committed to keeping this project functional and well-polished.
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I3I5MBHBZ)
