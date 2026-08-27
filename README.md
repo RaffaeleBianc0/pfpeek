@@ -2,15 +2,15 @@
 
 # ⚡ Features
 - 📊 **Graphical display** of your portfolio performance, both today and since you began investing.
-- 📂 **Flexible input:** Assets can be read automatically from a CSV file or defined via the `$manualAssets` variable, complete with quantity and average price.
 - 📈 **Overall metrics:** Profit/Loss, Day change, Portfolio cost, and Current value.
-- 📋 **Directa Integration:** Place a "Movimenti" CSV export file from Directa (a sample file is included) in the script directory to unlock:
+- 📋 **Directa Integration:** Place your latest "Movimenti" CSV export file from Directa (a sample file is included) in the script directory to unlock:
   - 💰 Money-Weighted Return Rate (MWRR) & Time-Weighted Return Rate (TWRR)
   - 💸 Total expenses & number of trades
   - 📊 Open and closed positions summary
   - 🔄 Total deposited and withdrawn funds to date
   - 💵 Realized gains from closed and partial positions
 - 🔍 **Asset breakdown:** For each portfolio asset, view its type (*Equity, Bonds, Commodity, Money Market*), ticker, full name, quantity, average cost, current price, current value, weight %, and individual P/L (overall & daily).
+- 📂 **Flexible input:** Assets are read from 2 CSV file: one is the Directa CSV export which you should overwrite when needed, the other one can be manually edited with all your transactions not managed through Directa.
 - 🖥️ **Adaptive console layout:** Dynamic text wrapping designed for terminal windows. Tall is better to fit all output without scrolling; fullscreen is ideal. Try also adjusting font size (usually <kbd>Ctrl</kbd> + mousewheel works).
 - 🌐 **Real-time data:** Fetches live market quotes directly from the web.
 - 💻 **Cross-platform PowerShell support:** Runs smoothly on modern Win10/11 environments, compatible with both **PowerShell 5.1** and **PowerShell 7+**.
@@ -43,5 +43,3 @@ Feel free to open an **Issue** to share ideas for new features, improvements, or
 # ⚠️ Disclaimer
 I invest in Italy, holding long-term ETFs only.  
 The metrics displayed reflect the specific data points I care about daily. It *might* work with crypto, individual stocks, or bonds, but it hasn't been tested for those asset classes yet — give it a try!
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I3I5MBHBZ)
