@@ -20,60 +20,16 @@
 
 .NOTES
     AUTHOR:      Raffaele Bianco
-    VERSION:     1.53 (2026-08-05)
+    VERSION:     1.73 (2026-08-26)
     BLOG POST:   https://www.raffaelebianco.it/blog/p/pfpeek/
     GITHUB REPO: https://github.com/RaffaeleBianc0/pfpeek
-    CHANGELOG:
-        * v1.53 (2026-08-05):
-            - Sparkline graph added for each asset.
-        * v1.52 (2026-08-05):
-            - TWRR calculation fixed.
-            - Small cosmetic fixes.
-        * v1.51 (2026-08-04):
-            - The "Parsing CSV transactions" progress step now shows the CSV filename being parsed, highlighted in white.
-        * v1.50 (2026-08-04):
-            - TWRR now reconstructs the ACTUAL historical position size held on each cash-flow date (from the Acquisto/Vendita history in the CSV) instead of approximating with today's quantities applied to historical closes. 
-            That approximation silently dropped any position that has since been fully closed out - e.g. a since-sold ETF that was a large chunk of the portfolio on a past cash-flow date - which could make a sub-period's value base look far too low (even negative/zero, wrongly triggering "wipeout" skips) right after a withdrawal that the real portfolio easily absorbed. 
-            Historical closes are now fetched for every ticker ever traded (open or since closed), not just currently-held ones, and Get-TwrrRobust values each cash-flow date from real per-ticker quantities via the new Get-QtyHistory/Get-QtyAtUnix/Get-HistoricalPortfolioValue helpers. 
-            The "Since <date>" custom chart is intentionally left on the old fast approximation (it's just a sparkline), so a separate warning now distinguishes chart-data gaps from TWRR-data gaps.
-        * v1.49 (2026-08-04):
-            - Small fixes on the adaptive layout logic.
-        * v1.48 (2026-08-03):
-            - Removed "+" sign from positive absolute values while keeping it for percentages and retaining "-" for negative values.
-            - Added $logFolder configuration variable with write-access verification.
-        * v1.47 (2026-08-03):
-            - When $useCsvPortfolio = $true, $startDateConfig is now automatically aligned to the oldest transaction found in the CSV, so the "since" chart/metrics always match the real investment history.
-            - Added realized gains: proceeds from sales minus the average-cost basis of the sold shares, summed across every ticker with at least one sale (covers fully closed positions as well as partial sells within positions that are still open). Shown in the portfolio metrics block and logged in the TSV log as RealizedGain.
-        * v1.46 (2026-08-03):
-            - TWRR previously failed silently (empty summary field, no warning) whenever it could not be computed. Get-TwrrRobust now emits a descriptive Write-Warning at every point it returns $null (missing/too-short historical "custom" series, non-positive value base at start/mid/end, invalid cumulative factor). Also warns upfront, listing by ticker, when the historical "Since <date>" download failed for one or more currently held assets - the most likely reason the custom series ends up empty and TWRR gets skipped entirely.
-            - Renamed "rbPfPeek" to "pfpeek".
-        * v1.45 (2026-08-03):
-            - Fixed TWRR being systematically (and often wrongly) negative. Root cause was a sign bug in the portfolio-side cash-flow conversion. Deposits/withdrawals are true external flows, so flipping their investor-side sign to get the portfolio-side impact is correct; but costs (commissions, stamp duty, withholding tax) are NOT external to the portfolio the way deposits are - they leave the account directly, so they must keep the SAME sign for the portfolio as for the investor (a reduction), not the opposite one. The old code flipped costs' sign too, which made every cost event look like a deposit, inflating the value base after each one and dragging the compounded return down (even into negative territory). Cash flows now carry a Type (External vs Cost) so Get-TwrrRobust applies the correct sign per type.
-        * v1.44 (2026-07-31):
-            - Added TWRR (Time-Weighted Rate of Return) calculation, displayed just before MWRR in the summary row and logged alongside it in the TSV log. TWRR chains sub-period returns between each external cash flow (deposits/withdrawals/costs), using the same historical valuation basis as the custom performance chart (current quantities applied to historical closes), so contribution/withdrawal timing no longer distorts the return the way MWRR does by design.
-        * v1.43 (2026-07-31):
-            - More granular progress bar when starting the script.
-        * v1.42 (2026-07-31):
-            - Rewrote the adaptive line-wrapping engine: it now measures the true visible width of each element (ignoring any ANSI color escape sequence, not just SGR codes), skips empty elements so no stray separators are printed, and always wraps whole elements to a new line, never splitting one across lines.
-            - Applied the new wrapping engine consistently to the portfolio metrics block and to both individual-asset display modes (multi-row and adaptive single-row).
-        * v1.41 (2026-07-29):
-            - Automatically create TSV log file with header row if it is created for the first time.
-            - Prepend "+" to positive percentage values.
-            - Enhanced column alignment for numeric values >= 100000.
-            - Adaptive single-row asset display mode for wide consoles based on maximum asset description length.
-            - Dynamic breakdown of investment duration into "y M d", "M d", or "d".
-        * v1.40 (2026-07-29):
-            - Appends a log row to .\pfpeek-log.tsv on each run.
-        * v1.39 (2026-07-29):
-            - Adaptive layout: no data is truncated or separated from its label; when an element doesn't fit the console width, it wraps entirely. Charts have a minimum configurable height ($minChartHeight).
-        * v1.38 (2026-07-28):
-            - First published release.
 #>
 
 
 
 # === CONFIGURATION STARTS HERE =============================================
-# Choose the portfolio source:
+
+# Portfolio source:
 #   $true  -> rebuilds it by reading the "Movimenti" CSV export from Directa Trading
 #   $false -> uses the static $manualAssets list below
 $useCsvPortfolio = $true
@@ -82,25 +38,46 @@ $useCsvPortfolio = $true
 # - If $csvPath is specified, that exact file is used.
 # - If $csvPath is $null, the script automatically searches for the most recent
 #   "Movimenti_*.csv" file in the script directory (or current directory).
-$csvPath = $null        # e.g., "C:\Path\Movimenti_J1234_20-7-2026.csv"
+$csvPath = $null        # e.g. "C:\Path\Movimenti_J1234_20-7-2026.csv"
 $tickerSuffix = ".MI"   # Market suffix to add to the tickers read from the CSV (Directa exports them without suffix)
 
-# --- Option B: Manual portfolio (used if $useCsvPortfolio = $false) ---
-# NOTE: If $useCsvPortfolio = $true, the order of this list defines the output sorting!
-$manualAssets = @(
-    @{ Ticker = "XD9U.MI"; AvgCost = 172.55; Qty = 49.00 }
-    @{ Ticker = "EXUS.MI"; AvgCost = 33.27;  Qty = 156.00 }
-    @{ Ticker = "EIMI.MI"; AvgCost = 34.64;  Qty = 43.00 }
-    @{ Ticker = "VWCE.MI"; AvgCost = 163.63; Qty = 1000.00 }
-    @{ Ticker = "XGLE.MI"; AvgCost = 207.00; Qty = 200.00 }
-    @{ Ticker = "WGLD.MI"; AvgCost = 261.57; Qty = 3.00 }
-    @{ Ticker = "XEON.MI"; AvgCost = 144.22; Qty = 35.00 }
-)
-$startDateConfig = "05/08/2024" # Custom start date for the second chart (you should put your first investment date here)
+# --- Option A: Manual transactions injected alongside the CSV ones ---
+# Use this to add transactions that were never tracked in the Directa CSV export
+# (e.g., assets bought on another broker/exchange). Read from a CSV file with the
+# SAME columns/format/delimiter (";") as the Directa "Movimenti" export (Italian
+# number formatting for Quantita/ImportoEuro/ImportoDivisa, e.g. "1.234,56", and
+# dates in "dd-MM-yyyy" format - no header/footer boilerplate, just the column
+# header row followed by the transaction rows).
+# NOTE: Ticker here must NOT have $tickerSuffix appended (it's added automatically,
+# just like for CSV-sourced tickers), unless the asset doesn't need one (e.g. BTC-USD).
+#   - If $manualTransactionsCSV is specified, that exact file is used.
+#   - If $manualTransactionsCSV is $null/empty, "movimentiAggiuntivi.csv" in the
+#     script directory (or current directory) is used; if it doesn't exist yet,
+#     it's created automatically with just the header row, may be useful for the future.
+$manualTransactionsCSV = ""   # e.g., "C:\Path\movimentiExtra.csv"
 
-# Logging folder configuration:
-#   - If $null, saves the TSV log in the same folder as the script.
+# --- Option A: Extra assets added to the ones read from CSV ---
+# --- Option B: Manual portfolio ---
+$manualAssets = @(
+    # @{ Ticker = "XD9U.MI"; AvgCost = 172.55; Qty = 49.00 }
+    # @{ Ticker = "EXUS.MI"; AvgCost = 33.27;  Qty = 156.00 }
+    # @{ Ticker = "EIMI.MI"; AvgCost = 34.64;  Qty = 43.00 }
+    # @{ Ticker = "VWCE.MI"; AvgCost = 163.63; Qty = 1000.00 }
+    # @{ Ticker = "XGLE.MI"; AvgCost = 207.00; Qty = 200.00 }
+    # @{ Ticker = "WGLD.MI"; AvgCost = 261.57; Qty = 3.00 }
+    # @{ Ticker = "XEON.MI"; AvgCost = 144.22; Qty = 35.00 }
+    @{ Ticker = "BTC-USD"; AvgCost = 91755.98; Qty = 0.001197 }
+)
+
+$assetsSorting = "VWCE.MI", "SWDA.MI", "XD9U.MI", "EXUS.MI", "EIMI.MI", "XGLE.MI", "WGLD.MI", "XEON.MI", "BTC-USD"
+
+# Custom start date for the overall chart
+# (put your first investment date here, or leave empty to use the oldest date read from the CSV):
+$startDateConfig = "03/08/2024"
+
+# Logging folder (if $null, the TSV log is saved in the same folder as the script):
 $logFolder = $null   # Common alternative: $env:TEMP
+
 # === CONFIGURATION ENDS HERE ===============================================
 
 
@@ -128,6 +105,7 @@ if (-not (Test-Path $targetLogDir)) {
         [void][System.IO.Directory]::CreateDirectory($targetLogDir)
     } catch {
         Write-Error "ERROR: Cannot create log directory '$targetLogDir': $_"
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit
     }
 }
@@ -138,6 +116,7 @@ try {
     [System.IO.File]::Delete($testFile)
 } catch {
     Write-Error "ERROR: No write access to the log folder '$targetLogDir': $_"
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 
@@ -200,12 +179,30 @@ if ($psVer.Major -lt 5 -or ($psVer.Major -eq 5 -and $psVer.Minor -lt 1)) {
     Write-Error "ERROR: This script requires PowerShell 5.1 or higher to run properly."
     Write-Warning "Your current version is: $psVer"
     Write-Warning "Please download and install the latest PowerShell."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 
 # $IsWindows exists only on PowerShell 6+ (Core). On Windows PowerShell 5.1 ("Desktop" edition)
 # it is always Windows, since that edition only runs on Windows.
 $IsWindowsHost = if ($PSVersionTable.PSEdition -eq 'Desktop') { $true } else { $IsWindows }
+
+# Detect whether the script was launched from the Windows Explorer right-click ("RMB")
+# context menu (e.g. "Run with PowerShell"), as opposed to an already-open terminal.
+# In that case the console window is spawned fresh and closes immediately once the
+# script ends, so we reserve 1 extra line and pause with a "Press any key..." prompt
+# at the end instead of letting the window vanish.
+$script:launchedFromExplorer = $false
+if ($IsWindowsHost) {
+    try {
+        $currentProcessId = $PID
+        $parentProcessId = (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $currentProcessId" -ErrorAction Stop).ParentProcessId
+        $parentProcessName = (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $parentProcessId" -ErrorAction Stop).Name
+        if ($parentProcessName -eq "explorer.exe") { $script:launchedFromExplorer = $true }
+    } catch {
+        $script:launchedFromExplorer = $false
+    }
+}
 
 # 2. Console Color / ANSI Escape Sequences Support Check
 Step-Progress "Enabling console colors (ANSI)"
@@ -237,6 +234,7 @@ try {
     Write-Error "ERROR: The console does not support UTF-8 or Braille Unicode rendering."
     Write-Warning "To fix this, configure your console font to a compatible TrueType font (e.g., Cascadia Code, JetBrains Mono, or Fira Code)."
     Write-Warning "Get modern developer fonts at: https://www.nerdfonts.com"
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 
@@ -249,6 +247,7 @@ try {
 } catch {
     Write-Error "ERROR: No internet connection detected or Yahoo Finance is unreachable."
     Write-Warning "Please check your network settings and proxy configuration."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 
@@ -268,12 +267,14 @@ if ($useCsvPortfolio) {
             Write-Error "ERROR: No 'Movimenti_*.csv' file found in '$searchDir' and no `$csvPath specified."
             Write-Warning "Set `$csvPath to the full path of your Directa export, or copy the CSV into the script folder."
             Write-Warning "Alternatively, set `$useCsvPortfolio = `$false to use the manual portfolio."
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             exit
         }
         $csvPath = $latestCsv.FullName
     }
     if (-not (Test-Path $csvPath)) {
         Write-Error "ERROR: CSV file not found: $csvPath"
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit
     }
 
@@ -289,14 +290,15 @@ if ($useCsvPortfolio) {
     Step-Progress "Parsing CSV transactions" (Split-Path $csvPath -Leaf)
 
     # 3. Read CSV and find the transaction header row
-    $csvLines = Get-Content -Path $csvPath -Encoding UTF8
+    $csvLines = @(Get-Content -Path $csvPath -Encoding UTF8)
     $headerIdx = -1
     for ($i = 0; $i -lt $csvLines.Count; $i++) {
-        if ($csvLines[$i] -match '^Data operazione;') { $headerIdx = $i; break }
+        if ($csvLines[$i].TrimStart([char]0xFEFF) -match '^Data operazione;') { $headerIdx = $i; break }
     }
     if ($headerIdx -lt 0) {
         Write-Error "ERROR: Header 'Data operazione' not found in CSV: $csvPath"
         Write-Warning "Ensure the file is an original Directa Trading 'Movimenti' export."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit
     }
 
@@ -307,6 +309,78 @@ if ($useCsvPortfolio) {
     $movimenti = $csvLines[($headerIdx + 1)..($csvLines.Count - 1)] |
                  Where-Object { $_.Trim().Length -gt 0 } |
                  ConvertFrom-Csv -Delimiter ";" -Header $csvHeaderFields
+
+    # 3b. Locate (or create) the manual transactions CSV, and merge its rows in.
+    # Same column layout/format/delimiter as the Directa export, so it's parsed
+    # with the exact same $csvHeaderFields and flows through the same aggregation
+    # logic below as the CSV-sourced movimenti.
+    $manualCsvPath = if ($null -ne $manualTransactionsCSV -and $manualTransactionsCSV.Trim() -ne "") {
+        $manualTransactionsCSV
+    } else {
+        $manualCsvDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        Join-Path $manualCsvDir "movimentiAggiuntivi.csv"
+    }
+
+    if (-not (Test-Path $manualCsvPath)) {
+        try {
+            # Same header text as the Directa export, so the file can also be
+            # opened/edited/appended to with the same conventions as a "real" one.
+            $manualCsvHeaderLine = "Data operazione;Data valuta;Tipo operazione;Ticker;Isin;Protocollo;Descrizione;Quantità;Importo euro;Importo Divisa;Divisa;Riferimento ordine"
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($manualCsvPath, "$manualCsvHeaderLine`r`n", $utf8NoBom)
+        } catch {
+            Write-Error "ERROR: Cannot create manual transactions CSV '$manualCsvPath': $_"
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit
+        }
+    }
+
+    $manualCsvLines = @(Get-Content -Path $manualCsvPath -Encoding UTF8)
+    $manualHeaderIdx = -1
+    for ($i = 0; $i -lt $manualCsvLines.Count; $i++) {
+        if ($manualCsvLines[$i].TrimStart([char]0xFEFF) -match '^Data operazione;') { $manualHeaderIdx = $i; break }
+    }
+    if ($manualHeaderIdx -lt 0) {
+        Write-Error "ERROR: Header 'Data operazione' not found in manual transactions CSV: $manualCsvPath"
+        Write-Warning "Ensure the file uses the same column layout as the Directa Trading 'Movimenti' export."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit
+    }
+
+    $manualDataLines = @($manualCsvLines[($manualHeaderIdx + 1)..($manualCsvLines.Count - 1)] |
+                          Where-Object { $_.Trim().Length -gt 0 })
+
+    if ($manualDataLines.Count -gt 0) {
+        $manualTransactions = $manualDataLines | ConvertFrom-Csv -Delimiter ";" -Header $csvHeaderFields
+
+        # NOTE: every date-parsing call site in this script (Get-QtyHistory,
+        # Get-CashHistory, the MWRR cashflow extraction, etc.) expects the
+        # Directa CSV's native "dd-MM-yyyy" (dash) format, which is also what
+        # this file uses since it shares the Directa layout. Normalize "/" to
+        # "-" anyway as a defensive fallback (e.g. if the file was hand-edited
+        # in Excel and dates got reformatted with slashes): left unparsed, a
+        # row would still count toward $positions/$assets (aggregated without
+        # date parsing) but stay invisible to $qtyHistory/$cashHistory, making
+        # TWRR's historical reconstruction miss/misdate it entirely - producing
+        # wildly wrong results.
+        $manualMovimenti = foreach ($mt in $manualTransactions) {
+            [pscustomobject]@{
+                DataOperazione    = ($mt.DataOperazione -replace '/', '-')
+                DataValuta        = ($mt.DataValuta -replace '/', '-')
+                TipoOperazione    = $mt.TipoOperazione
+                Ticker            = $mt.Ticker
+                Isin              = $mt.Isin
+                Protocollo        = $mt.Protocollo
+                Descrizione       = $mt.Descrizione
+                Quantita          = $mt.Quantita
+                ImportoEuro       = $mt.ImportoEuro
+                ImportoDivisa     = $mt.ImportoDivisa
+                Divisa            = $mt.Divisa
+                RiferimentoOrdine = $mt.RiferimentoOrdine
+            }
+        }
+        $movimenti = @($movimenti) + @($manualMovimenti)
+    }
 
     Step-Progress "Aggregating portfolio positions"
 
@@ -331,25 +405,9 @@ if ($useCsvPortfolio) {
         }
     }
 
-    # 5. Build $assets sorted according to $manualAssets sequence
-    # Map custom index for each full ticker (e.g., "XD9U.MI" -> 0)
-    $customOrderMap = @{}
-    for ($i = 0; $i -lt $manualAssets.Count; $i++) {
-        $customOrderMap[$manualAssets[$i].Ticker] = $i
-    }
-
-    # Map and sort tickers read from CSV
-    $sortedCsvTickers = $positions.Keys | Sort-Object {
-        $fullTicker = "$_$tickerSuffix"
-        if ($customOrderMap.ContainsKey($fullTicker)) {
-            return $customOrderMap[$fullTicker]
-        } else {
-            return 99999 # Place at bottom if ticker from CSV is not in $manualAssets
-        }
-    }
-
+    # 5. Build $assets from CSV positions
     $assets = @()
-    foreach ($ticker in $sortedCsvTickers) {
+    foreach ($ticker in $positions.Keys) {
         $p = $positions[$ticker]
         $netQty = $p.BoughtQty - $p.SoldQty
         if ($p.BoughtQty -le 0 -or $netQty -le 0.0001) { continue }
@@ -362,14 +420,38 @@ if ($useCsvPortfolio) {
         }
     }
 
+    # 6. Also consider the assets specified in $manualAssets, adding any ticker not
+    # already present from the CSV (a ticker already held is left as reconstructed
+    # from the CSV transactions, which is the more accurate/up-to-date source).
+    $csvTickersSet = @{}
+    foreach ($a in $assets) { $csvTickersSet[$a.Ticker] = $true }
+    foreach ($manualAsset in $manualAssets) {
+        if (-not $csvTickersSet.ContainsKey($manualAsset.Ticker)) {
+            $assets += $manualAsset
+            $csvTickersSet[$manualAsset.Ticker] = $true
+        }
+    }
+
     if ($assets.Count -eq 0) {
         Write-Error "ERROR: No open positions found in CSV: $csvPath"
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit
     }
 } else {
     Step-Progress "Loading manual portfolio configuration"
     $assets = $manualAssets
 }
+
+# 7. Sort $assets according to the $assetsSorting sequence (not $manualAssets, which is
+# only the static/extra portfolio definition). Tickers not listed in $assetsSorting are
+# placed at the bottom, in their original (CSV aggregation / manual list) order.
+$sortingOrderMap = @{}
+for ($i = 0; $i -lt $assetsSorting.Count; $i++) {
+    $sortingOrderMap[$assetsSorting[$i]] = $i
+}
+$assets = @($assets | Sort-Object -Property @{ Expression = {
+    if ($sortingOrderMap.ContainsKey($_.Ticker)) { $sortingOrderMap[$_.Ticker] } else { 99999 }
+} })
 
 
 
@@ -413,19 +495,33 @@ if ($csvMetricsAvailable) {
     }
 
     $buyDates = @()
+    $allTradeDates = @()
     foreach ($m in $movimenti) {
-        if ($m.TipoOperazione -eq 'Acquisto') {
+        if ($m.TipoOperazione -eq 'Acquisto' -or $m.TipoOperazione -eq 'Vendita') {
             $d = [DateTime]::MinValue
             if ([DateTime]::TryParseExact($m.DataOperazione, "dd-MM-yyyy", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$d)) {
-                $buyDates += $d
+                $allTradeDates += $d
+                if ($m.TipoOperazione -eq 'Acquisto') { $buyDates += $d }
             }
         }
     }
-    $firstInvestmentDate = if ($buyDates.Count -gt 0) { ($buyDates | Sort-Object)[0] } else { $null }
+    
+    if ($startDateConfig) {
+        $parsedStartDate = [DateTime]::MinValue
+        $startDateNormalized = $startDateConfig.Replace('/', '-')
+        if ([DateTime]::TryParseExact($startDateNormalized, "dd-MM-yyyy", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsedStartDate)) {
+            $firstInvestmentDate = $parsedStartDate
+        } else {
+            $firstInvestmentDate = if ($buyDates.Count -gt 0) { ($buyDates | Sort-Object)[0] } else { $null }
+        }
+    } else {
+        $firstInvestmentDate = if ($buyDates.Count -gt 0) { ($buyDates | Sort-Object)[0] } else { $null }
+    }
+    $latestTradeDate = if ($allTradeDates.Count -gt 0) { ($allTradeDates | Sort-Object -Descending)[0] } else { $null }
 
-    # Align $startDateConfig with the oldest transaction found in the CSV,
-    # so the "since" chart/metrics always match the actual investment history.
-    if ($firstInvestmentDate) {
+    # Align $startDateConfig with the oldest transaction found in the CSV when left
+    # empty, so the "since" chart/metrics always match the actual investment history.
+    if (-not $startDateConfig -and $firstInvestmentDate) {
         $startDateConfig = $firstInvestmentDate.ToString('dd/MM/yyyy')
     }
 
@@ -733,6 +829,14 @@ if ($csvMetricsAvailable) {
             return $null
         }
 
+        # If the configured start date predates the actual first cash movement
+        # (deposit/buy), there is nothing invested yet at $windowStartUnix and
+        # the reconstructed value is legitimately zero. Clamp the window start
+        # to the real first activity date instead of failing outright.
+        if ($cashHistory -and $cashHistory.Count -gt 0 -and $cashHistory[0].DateUnix -gt $windowStartUnix) {
+            $windowStartUnix = $cashHistory[0].DateUnix
+        }
+
         $periodStartValue = Get-HistoricalPortfolioValue $windowStartUnix $qtyHistory $priceSeriesByTicker $tickerSuffix $cashHistory
         if ($periodStartValue -le 0) {
             Write-Warning "TWRR: skipped - reconstructed initial portfolio value is zero or negative ($periodStartValue)."
@@ -763,7 +867,6 @@ if ($csvMetricsAvailable) {
             # here (as an earlier version did) makes every cost event look like a
             # deposit, inflating the value base and dragging TWRR down artificially.
             $periodStartValue = $valueBeforeFlow + $portfolioFlow
-            # Write-Host "TWRR debug: next periodStartValue=$periodStartValue"
             if ($periodStartValue -le 0) {
                 Write-Warning "TWRR: skipped - sub-period value base hit zero/negative ($periodStartValue) after cash flow on $($cf.Date.ToString('dd/MM/yyyy')) (Type: $($cf.Type), Amount: $($cf.Amount)). Can't chain returns past a wipeout."
                 return $null
@@ -805,6 +908,7 @@ if ($csvMetricsAvailable) {
 $dateParsed = [DateTime]::MinValue
 if (-not [DateTime]::TryParseExact($startDateConfig, "dd/MM/yyyy", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$dateParsed)) {
     Write-Error "ERROR: Configured start date ($startDateConfig) is invalid. Use dd/MM/yyyy format."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 $customStartUnix = (New-Object DateTimeOffset ($dateParsed)).ToUnixTimeSeconds()
@@ -1105,6 +1209,7 @@ try {
     if (-not $crumb) {
         Write-Error "ERROR: Unable to obtain a Yahoo Finance session token (crumb), even after attempting the GDPR consent fallback."
         Write-Warning "Yahoo Finance may be temporarily blocking automated requests from this IP. Try again in a few minutes."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit
     }
 
@@ -1188,6 +1293,13 @@ try {
 
         for ($step = 1; $step -lt $intradaySteps; $step++) {
             $targetTimestamp = $startTime + (($step - 1) * $stepInterval)
+            if ($targetTimestamp -gt $nowUnix) {
+                # Future hour: no real data can exist yet, leave it empty instead of
+                # forward-filling the last known price (which drew a flat, misleading
+                # line from "now" to the end of the day).
+                $alignedIntraday[$step] = [double]::NaN
+                continue
+            }
             $bestKey = $null
             $minDiff = 600
             foreach ($key in $intraPoints.Keys) {
@@ -1307,6 +1419,7 @@ try {
 
 } catch {
     Write-Error "Error retrieving data from Yahoo Finance: $_"
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 
@@ -1455,6 +1568,22 @@ function Format-NumberLocalized ($value, $decimals = 2) {
     return $intPart
 }
 
+# --- QUANTITY FORMATTING HELPER ---
+# Integer quantities are printed as plain integers (with thousand separators).
+# Non-integer quantities (e.g. fractional crypto holdings like 0.001197) would
+# be meaningless rounded to 0 decimals, so they're printed as the integer part
+# followed by ",~" to signal "has a non-zero fractional part" without taking up
+# the extra column width a full decimal expansion would need.
+function Format-QtyLocalized ($value) {
+    if ($null -eq $value) { return "" }
+    $doubleValue = [double]$value
+    if ($doubleValue -eq [math]::Truncate($doubleValue)) {
+        return Format-NumberLocalized $doubleValue 0
+    }
+    $intPartStr = ([math]::Truncate($doubleValue)).ToString("N0", [System.Globalization.CultureInfo]::InvariantCulture)
+    return "$intPartStr,~"
+}
+
 # --- FIXED ROWS & CHART HEIGHT CALCULATION ---
 # Estimate how many lines each section will consume based on current metrics and console width
 $fixedRows = 0
@@ -1479,6 +1608,9 @@ elseif ($consoleWidth -lt 193) { $fixedRows += ($assets.Count * 3) }
 else                           { $fixedRows += ($assets.Count * 2) }
 # Some space for elaborated PS Prompts at the bottom of the screen:
 $fixedRows += 2
+# When launched from the Explorer RMB context menu, reserve 1 extra line for the
+# "Press any key to close..." prompt printed at the very end of the script.
+if ($script:launchedFromExplorer) { $fixedRows += 1 }
 
 $availableHeightForCharts = $consoleHeight - $fixedRows
 $calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
@@ -1499,12 +1631,12 @@ $White = "$ESC[97m"
 $Orange = "$ESC[33m"
 $Reset = "$ESC[0m"
 
-function Get-TrendColor ($val) { 
-	if ($val -gt 0) { return $Green } elseif ($val -lt 0) { return $Red } else { return $Gray } 
+function Get-TrendColor ($val) {
+    if ($val -gt 0) { return $Green } elseif ($val -lt 0) { return $Red } else { return $Gray }
 }
 
-function Get-TrendArrow ($val) { 
-	if ($val -gt 0) { return [char]0x2191 } elseif ($val -lt 0) { return [char]0x2193 } else { return [char]0x2192 } 
+function Get-TrendArrow ($val) {
+    if ($val -gt 0) { return [char]0x2191 } elseif ($val -lt 0) { return [char]0x2193 } else { return [char]0x2192 }
 }
 
 # --- ADAPTIVE LAYOUT HELPERS (no truncation, no label/data split) ---
@@ -1521,15 +1653,15 @@ function Get-VisibleLength ($text) {
 # whole and are never split across lines. Empty/null elements are skipped so they never
 # introduce a stray separator. Used for both the portfolio metrics rows and the individual
 # asset statistics rows.
-function Write-WrappedSegments {
+function Get-WrappedSegmentLines {
     param(
-        [System.Text.StringBuilder]$OutputBuffer,
         [string[]]$Segments,
         [int]$ConsoleWidth,
         [string]$Separator = "  ",
         [string]$ContinuationIndent = "  "
     )
 
+    $lines = [System.Collections.Generic.List[string]]::new()
     $currentLine = $null
     $currentLen = 0
     $sepLen = Get-VisibleLength $Separator
@@ -1549,14 +1681,202 @@ function Write-WrappedSegments {
             $currentLine += $Separator + $seg
             $currentLen += $sepLen + $segLen
         } else {
-            $null = $OutputBuffer.AppendLine($currentLine)
+            $lines.Add($currentLine)
             $currentLine = $ContinuationIndent + $seg
             $currentLen = $indentLen + $segLen
         }
     }
 
     if ($null -ne $currentLine) {
-        $null = $OutputBuffer.AppendLine($currentLine)
+        $lines.Add($currentLine)
+    }
+
+    return , $lines.ToArray()
+}
+
+# Same wrapping algorithm as Get-WrappedSegmentLines, but instead of returning the assembled
+# lines it returns which segment indices are forced onto a new line. Used to work out, for a
+# single asset, where IT would break - so those per-asset results can then be combined (OR'd)
+# into one common set of break points shared by every asset in the table (see Get-LinesFromBreaks).
+function Get-SegmentBreaksBefore {
+    param(
+        [string[]]$Segments,
+        [int]$ConsoleWidth,
+        [string]$Separator = "  ",
+        [string]$ContinuationIndent = "  "
+    )
+
+    $breaksBefore = New-Object bool[] ($Segments.Count)
+    $sepLen = Get-VisibleLength $Separator
+    $indentLen = Get-VisibleLength $ContinuationIndent
+    $currentLen = -1
+
+    for ($i = 0; $i -lt $Segments.Count; $i++) {
+        $seg = $Segments[$i]
+        if ([string]::IsNullOrEmpty($seg)) { continue }
+
+        $segLen = Get-VisibleLength $seg
+        if ($currentLen -lt 0) {
+            $currentLen = $segLen
+            continue
+        }
+
+        if (($currentLen + $sepLen + $segLen) -le $ConsoleWidth) {
+            $currentLen += $sepLen + $segLen
+        } else {
+            $breaksBefore[$i] = $true
+            $currentLen = $indentLen + $segLen
+        }
+    }
+
+    return , $breaksBefore
+}
+
+# Assembles Segments into lines using a fixed, precomputed set of break points (as returned/
+# combined from Get-SegmentBreaksBefore) instead of measuring widths itself. This is what lets
+# every asset row in the table break at the same segment: the break points are decided once
+# (from the widest-wrapping asset) and then simply replayed here for every asset, regardless of
+# how narrow that particular asset's own content is.
+function Get-LinesFromBreaks {
+    param(
+        [string[]]$Segments,
+        [bool[]]$BreaksBefore,
+        [string]$Separator = "  ",
+        [string]$ContinuationIndent = "  "
+    )
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $currentLine = $null
+
+    for ($i = 0; $i -lt $Segments.Count; $i++) {
+        $seg = $Segments[$i]
+        if ([string]::IsNullOrEmpty($seg)) { continue }
+
+        if ($null -eq $currentLine) {
+            $currentLine = $seg
+            continue
+        }
+
+        if ($i -lt $BreaksBefore.Count -and $BreaksBefore[$i]) {
+            $lines.Add($currentLine)
+            $currentLine = $ContinuationIndent + $seg
+        } else {
+            $currentLine += $Separator + $seg
+        }
+    }
+
+    if ($null -ne $currentLine) {
+        $lines.Add($currentLine)
+    }
+
+    return , $lines.ToArray()
+}
+
+function Write-WrappedSegments {
+    param(
+        [System.Text.StringBuilder]$OutputBuffer,
+        [string[]]$Segments,
+        [int]$ConsoleWidth,
+        [string]$Separator = "  ",
+        [string]$ContinuationIndent = "  "
+    )
+
+    $lines = Get-WrappedSegmentLines -Segments $Segments -ConsoleWidth $ConsoleWidth -Separator $Separator -ContinuationIndent $ContinuationIndent
+    foreach ($line in $lines) {
+        $null = $OutputBuffer.AppendLine($line)
+    }
+}
+
+# Fixed footprint reserved on the right of every asset block for the sparkline: a constant
+# width (independent of any per-asset text) plus one column of spacing before it. Keeping
+# this constant - rather than deriving it from P/L text length - is what lets the text
+# wrapping and the graph height agree on the same row count.
+$script:AssetGraphWidth = 9
+$script:AssetGraphGap = 1
+
+function Get-AssetSparklineLayout {
+    param([int]$ConsoleWidth)
+
+    # No fixed console-width bands here: the sparkline is always considered enabled, with an
+    # unset (dynamic) height. The real height/width - and whether the sparkline ends up
+    # disabled after all - is decided purely from measured content (each asset's actual
+    # ticker+description length, and the resulting wrapped line count) by the iterative
+    # sizing pass and the fallback disable check further down, so it adapts to any console
+    # width and any asset name length instead of a hardcoded width->height mapping.
+    return [pscustomobject]@{
+        Enabled = $true
+        GraphWidth = $script:AssetGraphWidth
+        GraphGap = $script:AssetGraphGap
+        GraphHeight = $null
+    }
+}
+
+# Gets the number of text rows Segments will wrap to once GraphReservedWidth columns are
+# permanently reserved on the right (so the caller can size the sparkline to match).
+function Get-WrappedSegmentRowCount {
+    param(
+        [string[]]$Segments,
+        [int]$ConsoleWidth,
+        [string]$Separator = "  ",
+        [string]$ContinuationIndent = "  ",
+        [int]$GraphReservedWidth = 0
+    )
+
+    $textAreaWidth = [math]::Max(1, $ConsoleWidth - $GraphReservedWidth)
+    $lines = Get-WrappedSegmentLines -Segments $Segments -ConsoleWidth $textAreaWidth -Separator $Separator -ContinuationIndent $ContinuationIndent
+    return [math]::Max(1, $lines.Count)
+}
+
+# Wraps text Segments exactly like Write-WrappedSegments (a-capo only on whole label+value
+# blocks, never mid-block), but always reserves GraphWidth + GraphGap columns on the right
+# for a sparkline. Because wrapping itself is computed against the narrower text area, the
+# text can never collide with the graph column regardless of console width. The graph's
+# height must equal the resulting row count - call Get-WrappedSegmentRowCount first to size
+# GraphRows accordingly.
+function Write-WrappedSegmentsWithRightGraph {
+    param(
+        [System.Text.StringBuilder]$OutputBuffer,
+        [string[]]$Segments,
+        [int]$ConsoleWidth,
+        [string]$Separator = "  ",
+        [string]$ContinuationIndent = "  ",
+        [string[]]$GraphRows,
+        [int]$GraphWidth = $script:AssetGraphWidth,
+        [int]$GraphGap = $script:AssetGraphGap,
+        [int]$GraphColumnStart = 0,
+        [string]$GraphColor,
+        [string]$Reset,
+        # Optional shared break points (see Get-SegmentBreaksBefore/Get-LinesFromBreaks). When
+        # provided, the same line breaks decided for the whole asset table are replayed here
+        # instead of re-measuring against ConsoleWidth, so the printed output matches the row
+        # count/graph height already computed for this asset - and lines up with every other
+        # asset row in the table instead of wrapping independently.
+        [bool[]]$BreaksBefore = $null
+    )
+
+    $graphEnabled = $GraphWidth -gt 0
+    $textAreaWidth = if ($graphEnabled) { [math]::Max(1, $GraphColumnStart - 1) } else { $ConsoleWidth }
+    $lines = if ($null -ne $BreaksBefore) {
+        Get-LinesFromBreaks -Segments $Segments -BreaksBefore $BreaksBefore -Separator $Separator -ContinuationIndent $ContinuationIndent
+    } else {
+        Get-WrappedSegmentLines -Segments $Segments -ConsoleWidth $textAreaWidth -Separator $Separator -ContinuationIndent $ContinuationIndent
+    }
+    if ($lines.Count -eq 0) { $lines = @("") }
+
+    $renderRowCount = if ($graphEnabled) { [math]::Max($lines.Count, $GraphRows.Count) } else { $lines.Count }
+
+    for ($i = 0; $i -lt $renderRowCount; $i++) {
+        $textLine = if ($i -lt $lines.Count) { $lines[$i] } else { "" }
+        $graphRow = if ($graphEnabled -and $i -lt $GraphRows.Count) { $GraphRows[$i] } else { [string]([char]0x2800) * $GraphWidth }
+
+        if ($graphEnabled) {
+            $textVisLen = Get-VisibleLength $textLine
+            $padToGraphColumn = [math]::Max($GraphGap, $GraphColumnStart - $textVisLen)
+            $coloredGraph = "${GraphColor}${graphRow}${Reset}"
+            $null = $OutputBuffer.AppendLine("$textLine$(' ' * $padToGraphColumn)$coloredGraph")
+        } else {
+            $null = $OutputBuffer.AppendLine($textLine)
+        }
     }
 }
 
@@ -1565,7 +1885,7 @@ $outputBuffer = [System.Text.StringBuilder]::new()
 $null = $outputBuffer.Append("$ESC[2J$ESC[H")
 
 # A. INTRADAY Chart Block
-$null = $outputBuffer.AppendLine("${White}Portfolio performance today${Reset}")
+$null = $outputBuffer.AppendLine("${White}Portfolio performance $((Get-Date).ToString('dd/MM/yyyy HH:mm'))${Reset}")
 
 $intraFirstVal = $portfolioPrevCloseValue
 $intraLastVal = if ($portfolioIntradayFiltered.Count -gt 0) { $portfolioIntradayFiltered[-1] } else { 0 }
@@ -1676,6 +1996,7 @@ if ($csvMetricsAvailable) {
     }
     $costRatioStr = if ($null -ne $costRatio) { "$(Format-NumberLocalized $costRatio 2)%" } else { "N/A" }
     $firstInvestStr = if ($firstInvestmentDate) { $firstInvestmentDate.ToString('dd/MM/yyyy') } else { "N/A" }
+    $latestTradeStr = if ($latestTradeDate) { $latestTradeDate.ToString('dd/MM/yyyy') } else { "N/A" }
 
     $totExpStr = Format-NumberLocalized $totalExpensesSustained 2
     $totComStr = Format-NumberLocalized $totalCommissions 2
@@ -1684,20 +2005,21 @@ if ($csvMetricsAvailable) {
     $totDepStr = Format-NumberLocalized $totalDeposited 2
     $totWithStr = Format-NumberLocalized $totalWithdrawn 2
 
-    $m2 = "${Gray}Expenses:${Reset} ${Orange}$totExpStr${Reset} (${Orange}${costRatioStr} ${Gray}of gain${Reset})"
+    $m2 = "Expenses: ${Orange}$totExpStr${Reset} (${Orange}${costRatioStr} ${Reset}of gain)"
     $m3 = "${Gray}Commissions${Reset} ${Orange}$totComStr${Reset} + ${Gray}Stamp duty${Reset} ${Orange}$totStampStr${Reset} + ${Gray}Capital gain taxes${Reset} ${Orange}$totTaxStr${Reset}"
     $m4 = "${Gray}Trades:${Reset} ${White}${buyCount} buy & ${sellCount} sell${Reset}"
     $m5 = "${Gray}Positions:${Reset} ${White}${totalOpenPositions} open & ${totalClosedPositions} closed${Reset}"
     $m6 = "${Gray}First invest:${Reset} ${White}${firstInvestStr}${Reset} (${White}${investmentDurationFormatted} ago${Reset})"
+    $m6b = "${Gray}Latest buy/sell:${Reset} ${White}${latestTradeStr}${Reset}"
     $m7 = "${Gray}Deposited:${Reset} ${White}$totDepStr${Reset}  ${Gray}Withdrawn:${Reset} ${White}$totWithStr${Reset}"
 
     $realizedGainSign = if ($totalRealizedGain -lt 0) { "-" } else { "" }
     $realizedGainStr = $realizedGainSign + (Format-NumberLocalized ([math]::Abs($totalRealizedGain)) 2)
     $realizedGainColor = Get-TrendColor $totalRealizedGain
-    $m8 = "${Gray}Realized gains:${Reset} ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
+    $m8 = "Realized gains: ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
 
     Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", "= $m3") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "  "
-    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m7, $m8) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m6b, $m7, $m8) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
 }
 
 $null = $outputBuffer.AppendLine("-" * $consoleWidth)
@@ -1726,6 +2048,7 @@ try {
         OpenPositions     = if ($csvMetricsAvailable) { $totalOpenPositions } else { $assets.Count }
         ClosedPositions   = if ($csvMetricsAvailable) { $totalClosedPositions } else { "" }
         FirstInvestDate   = if ($csvMetricsAvailable -and $firstInvestmentDate) { $firstInvestmentDate.ToString('dd/MM/yyyy') } else { "" }
+        LatestTradeDate   = if ($csvMetricsAvailable -and $latestTradeDate) { $latestTradeDate.ToString('dd/MM/yyyy') } else { "" }
         DaysInvested      = if ($csvMetricsAvailable) { $investmentDurationFormatted } else { "" }
         Deposited         = if ($csvMetricsAvailable) { $totalDeposited.ToString('F2', $ic) } else { "" }
         Withdrawn         = if ($csvMetricsAvailable) { $totalWithdrawn.ToString('F2', $ic) } else { "" }
@@ -1759,9 +2082,18 @@ function Get-AssetCategory ($ticker, $name) {
     if ($t -match "EM35" -or $n -match "BOND" -or $n -match "TREASURY" -or $n -match "GOVT" -or $n -match "CORP" -or $n -match "OBBL") {
         return @{ Label = "   BOND    "; Color = "$ESC[44;97m" }
     }
+    if ($t -match "BITCOIN" -or $t -match "BTC" -or $n -match "BITCOIN" -or $n -match "BTC" -or $n -match "CRYPTO") {
+        return @{ Label = "  CRYPTO   "; Color = "$ESC[46;97m" }
+    }
     
     return @{ Label = "  EQUITY   "; Color = "$ESC[41;97m" }
 }
+
+# Fixed footprint values for the per-asset sparkline: see $script:AssetGraphWidth /
+# $script:AssetGraphGap declared with Get-AssetSparklineLayout above. The actual width/height
+# used is decided further below, only once the table's line count is known (see Pass 1/1b).
+$assetGraphLayoutProbe = Get-AssetSparklineLayout -ConsoleWidth $consoleWidth
+$assetGraphGap = $assetGraphLayoutProbe.GraphGap
 
 # Determine maximum asset description length for adaptive single-row layout on wide consoles
 $maxDescLen = 0
@@ -1769,7 +2101,41 @@ foreach ($item in $portfolio) {
     $descLen = ("$($item.Ticker) $($item.Name)").Length
     if ($descLen -gt $maxDescLen) { $maxDescLen = $descLen }
 }
-$useSingleRowAssetLayout = $consoleWidth -ge 135
+
+# FIX: the single-row-per-asset layout used to switch on at a fixed "$consoleWidth -ge 135"
+# threshold, regardless of how much horizontal space the description/metrics/P/L/sparkline
+# actually needed. That guess was frequently wrong in both directions: on a console just
+# past 135 columns wide (but with long asset names) the combined "desc+metrics" segment and
+# the separate "P/L" segment did not actually fit together on the text area left after the
+# sparkline's worst-case ~28-column reservation, so Get-WrappedSegmentLines still split them
+# onto two lines - i.e. "single row" mode rendered two rows anyway. Conversely, on consoles
+# with short asset names the true single-row content could fit well below 135 too, wasting
+# the more compact single-row layout on consoles that could support it.
+# Fix: measure the ACTUAL fixed-width pieces (description, padding, metrics columns, P/L
+# columns, sparkline reservation) using the very same format strings used to render them
+# further down, and only switch to single-row mode when the full assembled row is guaranteed
+# to fit within $consoleWidth - keeping the "row count" decision in sync with reality instead
+# of a magic number. This threshold check intentionally stays conservative (worst-case 27-wide
+# graph reservation): it only decides a yes/no layout switch, not how many lines get printed.
+$sampleMetricsPart = "${Gray}Qty:${Reset} {0,4}  ${Gray}Avg:${Reset} {1,8}  ${Gray}Price:${Reset} {2,8}  ${Gray}Value:${Reset} ${White}{3,9} ({4,5}%)${Reset}" -f "0", "0", "0", "0", "0"
+$sampleGainText = "{0} {1,9} ({2,6}%)" -f ([char]0x2192), "0", "0"
+$samplePlPart = "P/L: $sampleGainText   Day: $sampleGainText"
+
+$singleRowLabelAndDescWidth   = 12 + $maxDescLen                    # category label (11) + 1 space + "Ticker Name"
+$singleRowPaddingWidth        = 2                                   # minimum padding between description and metrics columns
+$singleRowMetricsWidth        = Get-VisibleLength $sampleMetricsPart
+$singleRowSegmentSeparatorWidth = 3                                 # "   " separator Get-WrappedSegmentLines inserts between same-line segments
+$singleRowPlWidth             = Get-VisibleLength $samplePlPart
+$singleRowGraphReserve        = if ($assetGraphLayoutProbe.Enabled) { 9 + $script:AssetGraphGap } else { 0 }
+
+$requiredSingleRowWidth = $singleRowLabelAndDescWidth + $singleRowPaddingWidth + $singleRowMetricsWidth + $singleRowSegmentSeparatorWidth + $singleRowPlWidth + $singleRowGraphReserve
+
+$useSingleRowAssetLayout = $consoleWidth -ge $requiredSingleRowWidth
+
+$maxSingleSegmentLen = 0
+
+# --- Pass 1: build every asset's Segments (text only - no wrapping/graph sizing yet). ---
+$assetSegmentsByItem = @()
 
 foreach ($item in $portfolio) {
     $weight = ($item.Value / $totalValue) * 100
@@ -1779,7 +2145,7 @@ foreach ($item in $portfolio) {
     $cat = Get-AssetCategory $item.Ticker $item.Name
     $labelFormatted = "$($cat.Color)$($cat.Label)$Reset"
 
-    $qtyStr = Format-NumberLocalized $item.Qty 0
+    $qtyStr = Format-QtyLocalized $item.Qty
     $avgCostStr = Format-NumberLocalized $item.AvgCost 2
     $priceStr = Format-NumberLocalized $item.CurrentPrice 2
     $valStr = Format-NumberLocalized $item.Value 2
@@ -1795,19 +2161,7 @@ foreach ($item in $portfolio) {
     $dayStr = $daySign + (Format-NumberLocalized ([math]::Abs($item.DayChangeTotal)) 2)
     $dayPctStr = $dayPctSign + (Format-NumberLocalized $item.DayChangePct 2)
 
-    $placeholderPlText = "${Gray}P/L:${Reset} {0}   ${Gray}Day:${Reset} {1}   " -f "$(Get-TrendArrow $item.Gain) $gainStr ($gainPctStr%)", "$(Get-TrendArrow $item.DayChangeTotal) $dayStr ($dayPctStr%)"
-    $basePlLength = Get-VisibleLength($placeholderPlText)
-    $graphWidth = [math]::Min(10, [math]::Max(1, $consoleWidth - $basePlLength - 2))
-    if ($graphWidth -lt 1) { $graphWidth = 1 }
-
-    $dailyGraph = [char]0x2800
-    if ($intradayData.ContainsKey($item.Ticker) -and $intradayData[$item.Ticker].Count -gt 1) {
-        $graphChar = Get-BrailleSparkline -values $intradayData[$item.Ticker] -height 1 -targetWidth $graphWidth
-        if ($graphChar -is [array] -and $graphChar.Count -gt 0) { $graphChar = $graphChar[0] }
-        if (-not [string]::IsNullOrEmpty($graphChar)) { $dailyGraph = $graphChar }
-    }
     $graphColor = Get-TrendColor $item.DayChangeTotal
-    $graph = "${graphColor}${dailyGraph}${Reset}"
 
     if ($useSingleRowAssetLayout) {
         # Single row per asset format for very wide consoles, aligned with max description length
@@ -1815,7 +2169,7 @@ foreach ($item in $portfolio) {
         $paddingNeeded = [math]::Max(2, $maxDescLen - ("$($item.Ticker) $($item.Name)").Length + 2)
         $paddingStr = " " * $paddingNeeded
 
-        $metricsPart = "${Gray}Qty:${Reset} {0,4}  ${Gray}Avg:${Reset} {1,6}  ${Gray}Price:${Reset} {2,6}  ${Gray}Value:${Reset} ${White}{3,9} ({4,5}%)${Reset}" -f `
+        $metricsPart = "${Gray}Qty:${Reset} {0,4}  ${Gray}Avg:${Reset} {1,8}  ${Gray}Price:${Reset} {2,8}  ${Gray}Value:${Reset} ${White}{3,9} ({4,5}%)${Reset}" -f `
             $qtyStr, $avgCostStr, $priceStr, $valStr, $weightStr
 
         $rawGainText = "{0} {1,9} ({2,6}%)" -f (Get-TrendArrow $item.Gain), $gainStr, $gainPctStr
@@ -1824,13 +2178,13 @@ foreach ($item in $portfolio) {
         $coloredGain = "${gainColor}${rawGainText}${Reset}"
         $coloredDay  = "${dcColor}${rawDayText}${Reset}"
 
-        $plPart = "${Gray}P/L:${Reset} $coloredGain   ${Gray}Day:${Reset} $coloredDay   $graph"
+        $plPart = "${Gray}P/L:${Reset} $coloredGain   ${Gray}Day:${Reset} $coloredDay"
 
-        Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @("$descPart$paddingStr$metricsPart", $plPart) -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  "
+        $assetSegments = @("$descPart$paddingStr$metricsPart", $plPart)
     } else {
-        $null = $outputBuffer.AppendLine("$labelFormatted ${White}$($item.Ticker) ${Gray}$($item.Name)${Reset}")
+        $titleLine = "$labelFormatted ${White}$($item.Ticker) ${Gray}$($item.Name)${Reset}"
 
-        $posRow = " ${Gray}Qty:${Reset} {0,4}   ${Gray}Avg:${Reset} {1,6}   ${Gray}Price:${Reset} {2,6}   ${Gray}Value: ${White}{3,9} ({4,5}%)${Reset}" -f `
+        $posRow = " ${Gray}Qty:${Reset} {0,4}   ${Gray}Avg:${Reset} {1,8}   ${Gray}Price:${Reset} {2,8}   ${Gray}Value: ${White}{3,9} ({4,5}%)${Reset}" -f `
             $qtyStr, $avgCostStr, $priceStr, $valStr, $weightStr
 
         $rawGainText = "{0} {1,9} ({2,6}%)" -f (Get-TrendArrow $item.Gain), $gainStr, $gainPctStr
@@ -1842,11 +2196,194 @@ foreach ($item in $portfolio) {
         $coloredGain = "${gainColor}${gainFormatted}${Reset}"
         $coloredDay  = "${dcColor}${dayFormatted}${Reset}"
 
-        $plString = "${Gray}P/L:${Reset} ${coloredGain}   ${Gray}Day:${Reset} $coloredDay   $graph"
+        $plString = "${Gray}P/L:${Reset} ${coloredGain}   ${Gray}Day:${Reset} $coloredDay"
 
-        Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @($posRow, $plString) -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  "
+        $assetSegments = @($titleLine, $posRow, $plString)
     }
+
+    foreach ($seg in $assetSegments) {
+        $segLen = Get-VisibleLength $seg
+        if ($segLen -gt $maxSingleSegmentLen) { $maxSingleSegmentLen = $segLen }
+    }
+
+    $assetSegmentsByItem += [pscustomobject]@{
+        Segments = $assetSegments
+        GraphGap = $assetGraphGap
+        GraphColor = $graphColor
+        Item = $item
+    }
+}
+
+$assetSegmentCount = if ($assetSegmentsByItem.Count -gt 0) { $assetSegmentsByItem[0].Segments.Count } else { 0 }
+
+# Builds one shared set of forced line-break points for the WHOLE table at a given text
+# width: each asset's own break points (Get-SegmentBreaksBefore) are OR'd together, so the
+# table breaks wherever the widest-wrapping asset needs to - and every row, even much
+# narrower ones, is forced to break at that same point too. That's what keeps the
+# Qty/Avg/Price/P/L columns vertically aligned across the whole table.
+# ForceBreakBefore additionally marks segment indices that must ALWAYS start a new line,
+# regardless of whether they'd technically fit on the previous one - see its use below.
+function Get-GlobalBreaksBefore {
+    param(
+        [object[]]$Entries,
+        [int]$TextWidth,
+        [int]$SegmentCount,
+        [int[]]$ForceBreakBefore = @()
+    )
+    $breaks = New-Object bool[] ($SegmentCount)
+    foreach ($entry in $Entries) {
+        $itemBreaksBefore = Get-SegmentBreaksBefore -Segments $entry.Segments -ConsoleWidth $TextWidth -Separator "   " -ContinuationIndent "  "
+        for ($breakIdx = 0; $breakIdx -lt $itemBreaksBefore.Count; $breakIdx++) {
+            if ($itemBreaksBefore[$breakIdx]) { $breaks[$breakIdx] = $true }
+        }
+    }
+    foreach ($forceIdx in $ForceBreakBefore) {
+        if ($forceIdx -ge 0 -and $forceIdx -lt $breaks.Count) { $breaks[$forceIdx] = $true }
+    }
+    return , $breaks
+}
+
+# In the multi-row layout, Segments are @(titleLine, posRow, plString). titleLine's length
+# varies per asset (it contains the ticker/name), while posRow and plString are built entirely
+# from fixed-width format specifiers ({0,4}, {0,-21}, etc.) and are therefore the SAME visible
+# length for every asset. Packing titleLine together with posRow onto one line - which the
+# width-based wrapping above would otherwise happily do once the console is wide enough - was
+# what broke the vertical alignment: posRow's "Qty:"/"Avg:"/"Price:" labels would then start at
+# a column that shifts with every asset's ticker/name length instead of a fixed column. Forcing
+# a break right after titleLine keeps every OTHER line built purely from fixed-width segments,
+# so whenever those lines combine (or not) they still start at the same column for every asset.
+$forceBreakBefore = if (-not $useSingleRowAssetLayout -and $assetSegmentCount -ge 2) { @(1) } else { @() }
+
+# --- Pass 1b: decide how many lines the asset rows will occupy, THEN size the sparkline to
+# match - not the other way round. For a fixed-height graph (consoleWidth 78-136, always 3
+# rows) the reserved width is exactly known up front, so this is a single pass. For the
+# "dynamic" case (very wide/narrow consoles) the graph's own height - and therefore how much
+# text width is left before the table wraps - isn't known until the line count is decided,
+# which is itself decided by how much text width is left: a circular dependency. That's
+# resolved by iterating: start from the shortest possible graph (1 row), see how many lines
+# that implies for the widest-wrapping asset, and if that's more rows than assumed, grow the
+# graph to match and re-check. This converges in at most 3 steps, since height only ever takes
+# the values 1, 2 or 3 - and it never assumes a wider reservation than the table actually ends
+# up needing, so assets no longer wrap onto an extra line (or get an over-tall sparkline) just
+# because a worst-case guess reserved more room than was really required.
+if ($assetGraphLayoutProbe.Enabled -and $null -eq $assetGraphLayoutProbe.GraphHeight) {
+    $globalGraphHeight = 1
+    for ($iter = 0; $iter -lt 3; $iter++) {
+        $reserveWidth = [math]::Min(27, [math]::Max(9, 9 * $globalGraphHeight)) + $assetGraphGap
+        $textWidth = [math]::Max(1, $consoleWidth - $reserveWidth)
+
+        $globalBreaksBefore = Get-GlobalBreaksBefore -Entries $assetSegmentsByItem -TextWidth $textWidth -SegmentCount $assetSegmentCount -ForceBreakBefore $forceBreakBefore
+        $lineCount = 1 + (@($globalBreaksBefore) | Where-Object { $_ }).Count
+        $neededHeight = [math]::Min(3, [math]::Max(1, $lineCount))
+
+        if ($neededHeight -le $globalGraphHeight) { break }
+        $globalGraphHeight = $neededHeight
+    }
+} elseif ($assetGraphLayoutProbe.Enabled) {
+    # Fixed height (always 3 rows -> always a 27-wide reservation): the reserved width is
+    # already exact, no guessing/iterating needed.
+    $globalGraphHeight = 3
+    $textWidth = [math]::Max(1, $consoleWidth - 27 - $assetGraphGap)
+    $globalBreaksBefore = Get-GlobalBreaksBefore -Entries $assetSegmentsByItem -TextWidth $textWidth -SegmentCount $assetSegmentCount -ForceBreakBefore $forceBreakBefore
+} else {
+    # No sparkline at all: wrap against the full console width.
+    $globalGraphHeight = 0
+    $globalBreaksBefore = Get-GlobalBreaksBefore -Entries $assetSegmentsByItem -TextWidth $consoleWidth -SegmentCount $assetSegmentCount -ForceBreakBefore $forceBreakBefore
+}
+
+$globalGraphWidth = if ($assetGraphLayoutProbe.Enabled) { [math]::Min(27, [math]::Max(9, 9 * $globalGraphHeight)) } else { 0 }
+
+# --- Pass 2: replay the SAME break points for every asset (Get-LinesFromBreaks), so all rows
+# share an identical line structure, using the sparkline height/width already decided above. ---
+$assetRenderInfos = @()
+
+foreach ($entry in $assetSegmentsByItem) {
+    $wrappedTextLines = Get-LinesFromBreaks -Segments $entry.Segments -BreaksBefore $globalBreaksBefore -Separator "   " -ContinuationIndent "  "
+    if ($wrappedTextLines.Count -eq 0) { $wrappedTextLines = @("") }
+
+    $assetRenderInfos += [pscustomobject]@{
+        Segments = $entry.Segments
+        GraphWidth = $globalGraphWidth
+        GraphGap = $entry.GraphGap
+        GraphHeight = $globalGraphHeight
+        WrappedTextLines = $wrappedTextLines
+        GraphColor = $entry.GraphColor
+        Item = $entry.Item
+    }
+}
+
+$maxTextWidth = 0
+foreach ($renderInfo in $assetRenderInfos) {
+    foreach ($line in $renderInfo.WrappedTextLines) {
+        $lineLen = Get-VisibleLength $line
+        if ($lineLen -gt $maxTextWidth) { $maxTextWidth = $lineLen }
+    }
+}
+$graphColumnStart = if ($maxTextWidth -gt 0) { $maxTextWidth + 1 } else { 0 }
+
+# Clamp the graph column so that text + gap + graph never exceeds $consoleWidth: without
+# this, some combinations of console width and asset description length pushed the
+# printed line width past the console's actual width, causing the terminal to auto-wrap
+# mid-line (splitting braille glyphs and injecting stray newlines into the sparkline).
+# Write-WrappedSegmentsWithRightGraph re-wraps each asset's text against the (possibly
+# narrower) clamped column, so this only ever adds text lines - it never truncates or
+# overlaps the graph.
+$maxGraphWidthUsed = 0
+foreach ($renderInfo in $assetRenderInfos) {
+    if ($renderInfo.GraphWidth -gt $maxGraphWidthUsed) { $maxGraphWidthUsed = $renderInfo.GraphWidth }
+}
+if ($maxGraphWidthUsed -gt 0) {
+    $maxAllowedGraphColumnStart = $consoleWidth - $script:AssetGraphGap - $maxGraphWidthUsed
+    if ($graphColumnStart -gt $maxAllowedGraphColumnStart) {
+        $graphColumnStart = [math]::Max(1, $maxAllowedGraphColumnStart)
+    }
+}
+
+# Whole segments (e.g. a wide Qty/Avg metrics row) are never split, so the graph column
+# can never start before the widest single segment ends - otherwise that segment alone
+# would overflow into (or past) the graph, wrapping the terminal mid-line. If honoring
+# that minimum would leave no usable room for even the narrowest sparkline, drop the
+# per-asset graphs entirely for this render instead of printing a garbled line.
+$minRequiredGraphColumnStart = $maxSingleSegmentLen + 1
+if ($maxGraphWidthUsed -gt 0 -and ($minRequiredGraphColumnStart + $script:AssetGraphGap + $script:AssetGraphWidth) -gt $consoleWidth) {
+    foreach ($renderInfo in $assetRenderInfos) { $renderInfo.GraphWidth = 0 }
+    $graphColumnStart = 0
+} elseif ($graphColumnStart -lt $minRequiredGraphColumnStart) {
+    $graphColumnStart = $minRequiredGraphColumnStart
+    $maxAllowedGraphWidth = [math]::Max(0, $consoleWidth - $graphColumnStart - $script:AssetGraphGap)
+    foreach ($renderInfo in $assetRenderInfos) {
+        if ($renderInfo.GraphWidth -gt $maxAllowedGraphWidth) { $renderInfo.GraphWidth = $maxAllowedGraphWidth }
+    }
+}
+
+foreach ($renderInfo in $assetRenderInfos) {
+    $graphRows = @()
+    if ($renderInfo.GraphWidth -gt 0) {
+        $graphRows = @([string]([char]0x2800) * $renderInfo.GraphWidth) * $renderInfo.GraphHeight
+        if ($intradayData.ContainsKey($renderInfo.Item.Ticker)) {
+            # Only consider steps up to "now" (same $currentStepLimit used for the main
+            # portfolio chart), and pass the matching $intradayRatio so the plotted
+            # portion of the graph stops exactly at the current hour, leaving the
+            # remaining (future) hours blank instead of stretching known data across
+            # the full width.
+            $knownSoFar = @($intradayData[$renderInfo.Item.Ticker][0..$currentStepLimit] | Where-Object { -not [double]::IsNaN($_) })
+            if ($knownSoFar.Count -gt 1) {
+                $renderedRows = @(Get-BrailleSparkline -values $knownSoFar -height $renderInfo.GraphHeight -targetWidth $renderInfo.GraphWidth -visibleRatio $intradayRatio)
+                if ($renderedRows.Count -gt 0) { $graphRows = $renderedRows }
+            }
+        }
+    }
+
+    Write-WrappedSegmentsWithRightGraph -OutputBuffer $outputBuffer -Segments $renderInfo.Segments -ConsoleWidth $consoleWidth -Separator "   " -ContinuationIndent "  " -GraphRows $graphRows -GraphWidth $renderInfo.GraphWidth -GraphGap $renderInfo.GraphGap -GraphColumnStart $graphColumnStart -GraphColor $renderInfo.GraphColor -Reset $Reset -BreaksBefore $globalBreaksBefore
+
     $null = $outputBuffer.AppendLine("")
 }
 
 Write-Host $outputBuffer.ToString() -NoNewline
+
+# When launched from the Explorer RMB context menu, the console window would otherwise
+# close immediately once the script returns, so keep it open until the user acknowledges.
+if ($script:launchedFromExplorer) {
+    Write-Host "${Gray}Press any key to close...${Reset}" -NoNewline
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
