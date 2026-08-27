@@ -1,10 +1,4 @@
-# pfpeek
-
-<img width="1880" height="848" alt="pfpeek" src="https://github.com/user-attachments/assets/57237fe7-c297-41dd-b708-33345b8e01fc" />
-
-
-> [!NOTE]
-> 📌 **Please read the `#comments` in the topmost part of the script to find detailed and updated information.**
+<img alt="pfpeek" src="https://github.com/user-attachments/assets/57237fe7-c297-41dd-b708-33345b8e01fc" />
 
 # ⚡ Features
 - 📊 **Graphical display** of your portfolio performance, both today and since you began investing.
