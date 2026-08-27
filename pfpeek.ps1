@@ -20,7 +20,7 @@
 
 .NOTES
     AUTHOR:      Raffaele Bianco
-    VERSION:     1.74 (2026-08-27)
+    VERSION:     1.78 (2026-08-27)
     BLOG POST:   https://www.raffaelebianco.it/blog/p/pfpeek/
     GITHUB REPO: https://github.com/RaffaeleBianc0/pfpeek
 #>
@@ -83,7 +83,7 @@ $logFolder = $null   # Common alternative: $env:TEMP
 
 
 # --- MINIMUM CONSOLE SIZE CHECK ---
-$minWidth = 75
+$minWidth = 102
 $consoleWidth = $minWidth
 if ($Host.UI.RawUI.WindowSize.Width) { $consoleWidth = $Host.UI.RawUI.WindowSize.Width }
 if ($consoleWidth -lt $minWidth) {
@@ -1610,44 +1610,6 @@ function Format-QtyLocalized ($value) {
     return "$intPartStr,~"
 }
 
-# --- FIXED ROWS & CHART HEIGHT CALCULATION ---
-# Estimate how many lines each section will consume based on current metrics and console width
-$fixedRows = 0
-# Graphs block:
-$fixedRows += 4 # Performance today header + Prev/Now + timeline + separator
-$fixedRows += 3 # Performance since header + timeline + separator
-# Summary block:
-$fixedRows += 2 # Minimum, when console is wide enough and $useCsvPortfolio=$false
-if ($csvMetricsAvailable) {
-    if     ($consoleWidth -lt 105 ) { $fixedRows += 6 }
-    elseif ($consoleWidth -lt 121 ) { $fixedRows += 4 }
-    elseif ($consoleWidth -lt 170 ) { $fixedRows += 3 }
-    else                            { $fixedRows += 2 }
-    
-}
-elseif (-not $csvMetricsAvailable) {
-    if ($consoleWidth -lt 95 ) { $fixedRows += 1 }
-}
-# Assets table block:
-if     ($consoleWidth -lt 136) { $fixedRows += ($assets.Count * 4) }
-elseif ($consoleWidth -lt 193) { $fixedRows += ($assets.Count * 3) }
-else                           { $fixedRows += ($assets.Count * 2) }
-# Some space for elaborated PS Prompts at the bottom of the screen:
-$fixedRows += 2
-# When launched from the Explorer RMB context menu, reserve 1 extra line for the
-# "Press any key to close..." prompt printed at the very end of the script.
-if ($script:launchedFromExplorer) { $fixedRows += 1 }
-
-$availableHeightForCharts = $consoleHeight - $fixedRows
-$calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
-
-# Chart Generation with Dynamic Height
-$intradayChartRows = Get-BrailleSparkline -values $portfolioIntradayFiltered -height $calculatedChartHeight -targetWidth $targetChartWidth -visibleRatio $intradayRatio
-$intradayTimelineRow = Get-IntradayTimelineRow -targetWidth $targetChartWidth
-
-$customChartRows = Get-BrailleSparkline -values $portfolioCustom -height $calculatedChartHeight -targetWidth $targetChartWidth -Filled
-$customTimelineRow = Get-YearlyTimelineRow -timestamps $customTimestamps -targetWidth $targetChartWidth
-
 # --- CONSOLE PRINTING (BUFFERED OUTPUT TO PREVENT FLICKER) ---
 $ESC = [char]27
 $Green = "$ESC[92m"
@@ -1906,109 +1868,9 @@ function Write-WrappedSegmentsWithRightGraph {
     }
 }
 
-$outputBuffer = [System.Text.StringBuilder]::new()
-
-$null = $outputBuffer.Append("$ESC[2J$ESC[H")
-
-# A. INTRADAY Chart Block
-$null = $outputBuffer.AppendLine("${White}Portfolio performance $((Get-Date).ToString('dd/MM/yyyy HH:mm'))${Reset}")
-
-$intraFirstVal = $portfolioPrevCloseValue
-$intraLastVal = if ($portfolioIntradayFiltered.Count -gt 0) { $portfolioIntradayFiltered[-1] } else { 0 }
-$intraChartColor = Get-TrendColor ($intraLastVal - $intraFirstVal)
-
-# Prepend "+" to positive percentage values, remove "+" from positive absolute values
-$intraChangePct = $totalDayChangePct
-$pctSign = if ($intraChangePct -gt 0) { "+" } elseif ($intraChangePct -lt 0) { "" } else { "" }
-$pctColor = Get-TrendColor $intraChangePct
-$pctFormatted = "$pctColor$pctSign$(Format-NumberLocalized $intraChangePct 2)%$Reset"
-$cleanPctStr = "$pctSign$(Format-NumberLocalized $intraChangePct 2)%"
-
-$intraDelta = $totalDayChange
-$deltaColor = Get-TrendColor $intraDelta
-$deltaSign = if ($intraDelta -lt 0) { "-" } else { "" }
-$deltaValueStr = $deltaSign + (Format-NumberLocalized ([math]::Abs($intraDelta)) 2)
-
-$cleanNowStr = "Now: " + $deltaValueStr + " (" + $cleanPctStr + ")"
-
-$labelPrev = "Prev: " + (Format-NumberLocalized $intraFirstVal 2)
-$labelNow = "Now: " + "${deltaColor}${deltaValueStr}${Reset}" + " (" + $pctFormatted + ")"
-
-$consoleXNow = [int][math]::Round($intradayRatio * ($targetChartWidth - 1))
-$startNow = $consoleXNow - [int]($cleanNowStr.Length / 2)
-
-$maxStartNow = $targetChartWidth - $cleanNowStr.Length
-if ($startNow -gt $maxStartNow) { $startNow = $maxStartNow }
-
-$minStartNow = $labelPrev.Length + 2
-if ($startNow -lt $minStartNow) { $startNow = $minStartNow }
-
-$spacesCount = $startNow - $labelPrev.Length
-if ($spacesCount -lt 1) { $spacesCount = 1 }
-
-$headerValuesLine = $labelPrev + (" " * $spacesCount) + $labelNow
-$null = $outputBuffer.AppendLine(" ${Reset}${headerValuesLine}${Reset}")
-
-foreach ($row in $intradayChartRows) {
-    $null = $outputBuffer.AppendLine(" ${intraChartColor}${row}${Reset}")
-}
-$null = $outputBuffer.AppendLine(" ${Gray}${intradayTimelineRow}${Reset}")
-$null = $outputBuffer.AppendLine("-" * $consoleWidth)
-
-# D. Custom Historical Chart Block
-$null = $outputBuffer.AppendLine("${White}Portfolio performance since ${startDateConfig}${Reset}")
-$cFirstVal = if ($portfolioCustom.Count -gt 0) { $portfolioCustom[0] } else { 0 }
-$cLastVal = if ($portfolioCustom.Count -gt 0) { $portfolioCustom[-1] } else { 0 }
-$cChartColor = Get-TrendColor ($cLastVal - $cFirstVal)
-
-foreach ($row in $customChartRows) {
-    $null = $outputBuffer.AppendLine(" ${cChartColor}${row}${Reset}")
-}
-$null = $outputBuffer.AppendLine(" ${Gray}${customTimelineRow}${Reset}")
-$null = $outputBuffer.AppendLine("=" * $consoleWidth)
-
-# E. Summary Row
-$dcColor = Get-TrendColor $totalDayChange
-$tcColor = Get-TrendColor $totalChange
-
-if ($csvMetricsAvailable -and $null -ne $twrr) {
-    $twrrColor = Get-TrendColor $twrr
-    $twrrPctVal = $twrr * 100
-    $twrrSign = if ($twrrPctVal -gt 0) { "+" } else { "" }
-    $twrrStr = "TWRR: ${twrrColor}${twrrSign}$(Format-NumberLocalized $twrrPctVal 2)% ${Reset}annual"
-} else {
-    $twrrStr = ""
-}
-
-if ($csvMetricsAvailable -and $null -ne $mwrr) {
-    $mwrrColor = Get-TrendColor $mwrr
-    $mwrrPctVal = $mwrr * 100
-    $mwrrSign = if ($mwrrPctVal -gt 0) { "+" } else { "" }
-    $mwrrStr = "MWRR: ${mwrrColor}${mwrrSign}$(Format-NumberLocalized $mwrrPctVal 2)% ${Reset}annual"
-} else {
-    $mwrrStr = ""
-}
-
-$totDayChangeSign = if ($totalDayChange -lt 0) { "-" } else { "" }
-$totDayChangePctSign = if ($totalDayChangePct -gt 0) { "+" } else { "" }
-$totChangeSign = if ($totalChange -lt 0) { "-" } else { "" }
-$totChangePctSign = if ($totalChangePct -gt 0) { "+" } else { "" }
-
-$totDayChangeStr = $totDayChangeSign + (Format-NumberLocalized ([math]::Abs($totalDayChange)) 2)
-$totDayChangePctStr = $totDayChangePctSign + (Format-NumberLocalized $totalDayChangePct 2)
-$totChangeStr = $totChangeSign + (Format-NumberLocalized ([math]::Abs($totalChange)) 2)
-$totChangePctStr = $totChangePctSign + (Format-NumberLocalized $totalChangePct 2)
-$totValueStr = Format-NumberLocalized $totalValue 2
-$totCostStr = Format-NumberLocalized $totalCost 2
-
-$s1 = "Day change: ${dcColor}$(Get-TrendArrow $totalDayChange) $totDayChangeStr ($totDayChangePctStr%)$Reset"
-$s2 = $twrrStr
-$s3 = $mwrrStr
-$s4 = "P/L: ${tcColor}$(Get-TrendArrow $totalChange) $totChangeStr ($totChangePctStr%)${Reset} = ${Gray}Value ${White}$totValueStr${Reset} - ${Gray}Cost ${White}$totCostStr${Reset}"
-
-Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $s1 ", " $s2 ", " $s3 ", " $s4", "$s5") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent ""
-
-# E-bis. Portfolio Metrics (Responsive layout)
+# --- PORTFOLIO METRICS SUMMARY STRINGS (computed here, before the chart-height sizing
+# below, so Get-WrappedSegmentRowCount can measure their real wrapped row count instead of
+# the sizing logic having to guess it from console-width bands alone) ---
 if ($csvMetricsAvailable) {
 
     $totalGainAllTime = $totalValue + $totalWithdrawn - $totalDeposited
@@ -2042,55 +1904,10 @@ if ($csvMetricsAvailable) {
     $m7 = "Realized: ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
 
     $m8 = "Expenses: ${Orange}$totExpStr${Reset} (${Orange}${costRatioStr} ${Gray}of realized${Reset})"
-    $m9 = "${Gray}Commissions${Reset} ${Orange}$totComStr${Reset} + ${Gray}Stamp duty${Reset} ${Orange}$totStampStr${Reset} + ${Gray}Capital gain taxes${Reset} ${Orange}$totTaxStr${Reset}"
-    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", $m3, $m4, $m5, $m6) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
-    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m7", "  $m8", "= $m9") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "                       "
+    $m9 = "${Gray}CG taxes${Reset} ${Orange}$totTaxStr${Reset} + ${Gray}Commissions${Reset} ${Orange}$totComStr${Reset} + ${Gray}Stamp duty${Reset} ${Orange}$totStampStr${Reset}"
 }
 
-$null = $outputBuffer.AppendLine("-" * $consoleWidth)
 
-# --- LOG APPEND: TSV log with header row creation if missing ---
-try {
-    $logPath = Join-Path $targetLogDir "pfpeek-log.tsv"
-    $ic = [System.Globalization.CultureInfo]::InvariantCulture
-
-    $logStats = [ordered]@{
-        TotalValue        = $totalValue.ToString('F2', $ic)
-        TotalCost         = $totalCost.ToString('F2', $ic)
-        TotalChange       = $totalChange.ToString('F2', $ic)
-        TotalChangePct    = $totalChangePct.ToString('F2', $ic)
-        TotalDayChange    = $totalDayChange.ToString('F2', $ic)
-        TotalDayChangePct = $totalDayChangePct.ToString('F2', $ic)
-        TWRRPct           = if ($csvMetricsAvailable -and $null -ne $twrr) { ($twrr * 100).ToString('F2', $ic) } else { "" }
-        MWRRPct           = if ($csvMetricsAvailable -and $null -ne $mwrr) { ($mwrr * 100).ToString('F2', $ic) } else { "" }
-        ExpensesTotal     = if ($csvMetricsAvailable) { $totalExpensesSustained.ToString('F2', $ic) } else { "" }
-        ExpensesOfGainPct = if ($csvMetricsAvailable -and $null -ne $costRatio) { $costRatio.ToString('F2', $ic) } else { "" }
-        Commissions       = if ($csvMetricsAvailable) { $totalCommissions.ToString('F2', $ic) } else { "" }
-        StampDuty         = if ($csvMetricsAvailable) { $totalStampDuty.ToString('F2', $ic) } else { "" }
-        CapitalGainTaxes  = if ($csvMetricsAvailable) { $totalWithholdingTaxes.ToString('F2', $ic) } else { "" }
-        BuyTrades         = if ($csvMetricsAvailable) { $buyCount } else { "" }
-        SellTrades        = if ($csvMetricsAvailable) { $sellCount } else { "" }
-        OpenPositions     = if ($csvMetricsAvailable) { $totalOpenPositions } else { $assets.Count }
-        ClosedPositions   = if ($csvMetricsAvailable) { $totalClosedPositions } else { "" }
-        FirstInvestDate   = if ($csvMetricsAvailable -and $firstInvestmentDate) { $firstInvestmentDate.ToString('dd/MM/yyyy') } else { "" }
-        LatestTradeDate   = if ($csvMetricsAvailable -and $latestTradeDate) { $latestTradeDate.ToString('dd/MM/yyyy') } else { "" }
-        DaysInvested      = if ($csvMetricsAvailable) { $investmentDurationFormatted } else { "" }
-        Deposited         = if ($csvMetricsAvailable) { $totalDeposited.ToString('F2', $ic) } else { "" }
-        Withdrawn         = if ($csvMetricsAvailable) { $totalWithdrawn.ToString('F2', $ic) } else { "" }
-        RealizedGain      = if ($csvMetricsAvailable) { $totalRealizedGain.ToString('F2', $ic) } else { "" }
-    }
-
-    if (-not (Test-Path $logPath)) {
-        $headerLine = (@("Timestamp", "LogLevel") + @($logStats.Keys)) -join "`t"
-        Set-Content -Path $logPath -Value $headerLine -Encoding UTF8
-    }
-
-    $logTimestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    $logLine = (@($logTimestamp, "INFO") + @($logStats.Values)) -join "`t"
-    Add-Content -Path $logPath -Value $logLine -Encoding UTF8
-} catch {
-    Write-Warning "WARNING: Unable to write log row to ${logPath}: $_"
-}
 
 # F. Individual Assets
 
@@ -2099,19 +1916,19 @@ function Get-AssetCategory ($ticker, $name) {
     $n = $name.ToUpper()
 
     if ($t -match "GLD" -or $n -match "GOLD" -or $n -match "COMMODITY" -or $n -match "PHYSICAL") {
-        return @{ Label = " COMMODITY "; Color = "$ESC[43;30m" }
+        return @{ Label = " COMM "; Color = "$ESC[43;30m" }
     }
     if ($t -match "XEON" -or $t -match "LEON" -or $n -match "OVERNIGHT" -or $n -match "LIQUIDITY" -or $n -match "MONEY MARKET") {
-        return @{ Label = " MONEY MKT "; Color = "$ESC[100;97m" }
+        return @{ Label = " MMKT "; Color = "$ESC[100;97m" }
     }
     if ($t -match "EM35" -or $n -match "BOND" -or $n -match "TREASURY" -or $n -match "GOVT" -or $n -match "CORP" -or $n -match "OBBL") {
-        return @{ Label = "   BOND    "; Color = "$ESC[44;97m" }
+        return @{ Label = " BOND "; Color = "$ESC[44;97m" }
     }
     if ($t -match "BITCOIN" -or $t -match "BTC" -or $n -match "BITCOIN" -or $n -match "BTC" -or $n -match "CRYPTO") {
-        return @{ Label = "  CRYPTO   "; Color = "$ESC[46;97m" }
+        return @{ Label = " CRYP "; Color = "$ESC[46;97m" }
     }
     
-    return @{ Label = "  EQUITY   "; Color = "$ESC[41;97m" }
+    return @{ Label = " EQTY "; Color = "$ESC[41;97m" }
 }
 
 # Fixed footprint values for the per-asset sparkline: see $script:AssetGraphWidth /
@@ -2190,7 +2007,8 @@ foreach ($item in $portfolio) {
 
     if ($useSingleRowAssetLayout) {
         # Single row per asset format for very wide consoles, aligned with max description length
-        $descPart = "{0} {1} {2}" -f $labelFormatted, "${White}$($item.Ticker)${Reset}", "${Gray}$($item.Name)${Reset}"
+        $descPart = "{0} {1} {2}" -f $labelFormatted, "${White}$($item.Ticker)${Reset}", "${Reset}$($item.Name)${Reset}"
+
         $paddingNeeded = [math]::Max(2, $maxDescLen - ("$($item.Ticker) $($item.Name)").Length + 2)
         $paddingStr = " " * $paddingNeeded
 
@@ -2199,28 +2017,23 @@ foreach ($item in $portfolio) {
 
         $rawGainText = "{0} {1,9} ({2,6}%)" -f (Get-TrendArrow $item.Gain), $gainStr, $gainPctStr
         $rawDayText  = "{0} {1,8} ({2,6}%)" -f (Get-TrendArrow $item.DayChangeTotal), $dayStr, $dayPctStr
-
         $coloredGain = "${gainColor}${rawGainText}${Reset}"
         $coloredDay  = "${dcColor}${rawDayText}${Reset}"
-
         $plPart = "${Gray}P/L:${Reset} $coloredGain   ${Gray}Day:${Reset} $coloredDay"
 
         $assetSegments = @("$descPart$paddingStr$metricsPart", $plPart)
     } else {
-        $titleLine = "$labelFormatted ${White}$($item.Ticker) ${Gray}$($item.Name)${Reset}"
+        $titleLine = "$labelFormatted ${White}$($item.Ticker) ${Reset}$($item.Name)${Reset}"
 
         $posRow = " ${Gray}Qty:${Reset} {0,4}   ${Gray}Avg:${Reset} {1,8}   ${Gray}Price:${Reset} {2,8}   ${Gray}Value: ${White}{3,9} ({4,5}%)${Reset}" -f `
             $qtyStr, $avgCostStr, $priceStr, $valStr, $weightStr
 
         $rawGainText = "{0} {1,9} ({2,6}%)" -f (Get-TrendArrow $item.Gain), $gainStr, $gainPctStr
         $rawDayText  = "{0} {1,8} ({2,6}%)" -f (Get-TrendArrow $item.DayChangeTotal), $dayStr, $dayPctStr
-
         $gainFormatted = "{0,-21}" -f $rawGainText
         $dayFormatted  = "{0,-21}" -f $rawDayText
-
         $coloredGain = "${gainColor}${gainFormatted}${Reset}"
         $coloredDay  = "${dcColor}${dayFormatted}${Reset}"
-
         $plString = "${Gray}P/L:${Reset} ${coloredGain}   ${Gray}Day:${Reset} $coloredDay"
 
         $assetSegments = @($titleLine, $posRow, $plString)
@@ -2379,6 +2192,207 @@ if ($maxGraphWidthUsed -gt 0 -and ($minRequiredGraphColumnStart + $script:AssetG
     foreach ($renderInfo in $assetRenderInfos) {
         if ($renderInfo.GraphWidth -gt $maxAllowedGraphWidth) { $renderInfo.GraphWidth = $maxAllowedGraphWidth }
     }
+}
+
+
+# --- FIXED ROWS & CHART HEIGHT CALCULATION ---
+# The asset table has already been laid out above using the exact same wrapping/break logic
+# used by the renderer below. Reserve its REAL number of printed lines instead of estimating
+# from console-width bands. Each asset also gets one blank separator line after it.
+$fixedRows = 0
+# Graphs block:
+$fixedRows += 4 # Performance today header + Prev/Now + timeline + separator
+$fixedRows += 3 # Performance since header + timeline + separator
+# Summary block:
+$fixedRows += 2 # Minimum, when console is wide enough and $useCsvPortfolio=$false
+if ($csvMetricsAvailable) {
+    # Measured (not guessed) row count: replays the exact same wrapping the E-bis section
+    # further below will use to print $m2..$m9, so the reserved space always matches reality
+    # - including when it wraps to more than 1 line per group at narrow console widths.
+    $summaryGroup1Rows = Get-WrappedSegmentRowCount -Segments @(" $m2", $m3, $m4, $m5, $m6) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+    $summaryGroup2Rows = Get-WrappedSegmentRowCount -Segments @(" $m7", "  $m8", "= $m9") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "                       "
+    $fixedRows += $summaryGroup1Rows + $summaryGroup2Rows
+}
+elseif (-not $csvMetricsAvailable) {
+    if ($consoleWidth -lt 95 ) { $fixedRows += 1 }
+}
+# Assets table block: use the actual final row count from the shared break points.
+$assetRowsPerItem = if ($assetRenderInfos.Count -gt 0) {
+    [math]::Max(1, @($assetRenderInfos[0].WrappedTextLines).Count)
+} else {
+    0
+}
+if ($assets.Count -gt 0) {
+    $fixedRows += $assets.Count * ($assetRowsPerItem + 1)
+}
+# Some space for elaborated PS Prompts at the bottom of the screen:
+$fixedRows += 2
+# When launched from the Explorer RMB context menu, reserve 1 extra line for the
+# "Press any key to close..." prompt printed at the very end of the script.
+if ($script:launchedFromExplorer) { $fixedRows += 1 }
+
+$availableHeightForCharts = $consoleHeight - $fixedRows
+$calculatedChartHeight = [math]::Max($minChartHeight, [int][math]::Floor($availableHeightForCharts / 2))
+
+# Chart Generation with Dynamic Height
+$intradayChartRows = Get-BrailleSparkline -values $portfolioIntradayFiltered -height $calculatedChartHeight -targetWidth $targetChartWidth -visibleRatio $intradayRatio
+$intradayTimelineRow = Get-IntradayTimelineRow -targetWidth $targetChartWidth
+
+$customChartRows = Get-BrailleSparkline -values $portfolioCustom -height $calculatedChartHeight -targetWidth $targetChartWidth -Filled
+$customTimelineRow = Get-YearlyTimelineRow -timestamps $customTimestamps -targetWidth $targetChartWidth
+
+$outputBuffer = [System.Text.StringBuilder]::new()
+
+$null = $outputBuffer.Append("$ESC[2J$ESC[H")
+
+# A. INTRADAY Chart Block
+$null = $outputBuffer.AppendLine("${White}Portfolio performance $((Get-Date).ToString('dd/MM/yyyy HH:mm'))${Reset}")
+
+$intraFirstVal = $portfolioPrevCloseValue
+$intraLastVal = if ($portfolioIntradayFiltered.Count -gt 0) { $portfolioIntradayFiltered[-1] } else { 0 }
+$intraChartColor = Get-TrendColor ($intraLastVal - $intraFirstVal)
+
+# Prepend "+" to positive percentage values, remove "+" from positive absolute values
+$intraChangePct = $totalDayChangePct
+$pctSign = if ($intraChangePct -gt 0) { "+" } elseif ($intraChangePct -lt 0) { "" } else { "" }
+$pctColor = Get-TrendColor $intraChangePct
+$pctFormatted = "$pctColor$pctSign$(Format-NumberLocalized $intraChangePct 2)%$Reset"
+$cleanPctStr = "$pctSign$(Format-NumberLocalized $intraChangePct 2)%"
+
+$intraDelta = $totalDayChange
+$deltaColor = Get-TrendColor $intraDelta
+$deltaSign = if ($intraDelta -lt 0) { "-" } else { "+" }
+$deltaValueStr = $deltaSign + (Format-NumberLocalized ([math]::Abs($intraDelta)) 2)
+
+$cleanNowStr = "Now: " + $deltaValueStr + " (" + $cleanPctStr + ")"
+
+$labelPrev = "Prev: " + (Format-NumberLocalized $intraFirstVal 2)
+$labelNow = "Now: " + "${deltaColor}${deltaValueStr}${Reset}" + " (" + $pctFormatted + ")"
+
+$consoleXNow = [int][math]::Round($intradayRatio * ($targetChartWidth - 1))
+$startNow = $consoleXNow - [int]($cleanNowStr.Length / 2)
+
+$maxStartNow = $targetChartWidth - $cleanNowStr.Length
+if ($startNow -gt $maxStartNow) { $startNow = $maxStartNow }
+
+$minStartNow = $labelPrev.Length + 2
+if ($startNow -lt $minStartNow) { $startNow = $minStartNow }
+
+$spacesCount = $startNow - $labelPrev.Length
+if ($spacesCount -lt 1) { $spacesCount = 1 }
+
+$headerValuesLine = $labelPrev + (" " * $spacesCount) + $labelNow
+$null = $outputBuffer.AppendLine(" ${Reset}${headerValuesLine}${Reset}")
+
+foreach ($row in $intradayChartRows) {
+    $null = $outputBuffer.AppendLine(" ${intraChartColor}${row}${Reset}")
+}
+$null = $outputBuffer.AppendLine(" ${Gray}${intradayTimelineRow}${Reset}")
+$null = $outputBuffer.AppendLine("-" * $consoleWidth)
+
+# D. Custom Historical Chart Block
+$null = $outputBuffer.AppendLine("${White}Portfolio performance since ${startDateConfig}${Reset}")
+$cFirstVal = if ($portfolioCustom.Count -gt 0) { $portfolioCustom[0] } else { 0 }
+$cLastVal = if ($portfolioCustom.Count -gt 0) { $portfolioCustom[-1] } else { 0 }
+$cChartColor = Get-TrendColor ($cLastVal - $cFirstVal)
+
+foreach ($row in $customChartRows) {
+    $null = $outputBuffer.AppendLine(" ${cChartColor}${row}${Reset}")
+}
+$null = $outputBuffer.AppendLine(" ${Gray}${customTimelineRow}${Reset}")
+$null = $outputBuffer.AppendLine("=" * $consoleWidth)
+
+# E. Summary Row
+$dcColor = Get-TrendColor $totalDayChange
+$tcColor = Get-TrendColor $totalChange
+
+if ($csvMetricsAvailable -and $null -ne $twrr) {
+    $twrrColor = Get-TrendColor $twrr
+    $twrrPctVal = $twrr * 100
+    $twrrSign = if ($twrrPctVal -gt 0) { "+" } else { "" }
+    $twrrStr = "TWRR: ${twrrColor}${twrrSign}$(Format-NumberLocalized $twrrPctVal 2)% ${Reset}annual"
+} else {
+    $twrrStr = ""
+}
+
+if ($csvMetricsAvailable -and $null -ne $mwrr) {
+    $mwrrColor = Get-TrendColor $mwrr
+    $mwrrPctVal = $mwrr * 100
+    $mwrrSign = if ($mwrrPctVal -gt 0) { "+" } else { "" }
+    $mwrrStr = "MWRR: ${mwrrColor}${mwrrSign}$(Format-NumberLocalized $mwrrPctVal 2)% ${Reset}annual"
+} else {
+    $mwrrStr = ""
+}
+
+$totDayChangeSign = if ($totalDayChange -lt 0) { "-" } else { "" }
+$totDayChangePctSign = if ($totalDayChangePct -gt 0) { "+" } else { "" }
+$totChangeSign = if ($totalChange -lt 0) { "-" } else { "" }
+$totChangePctSign = if ($totalChangePct -gt 0) { "+" } else { "" }
+
+$totDayChangeStr = $totDayChangeSign + (Format-NumberLocalized ([math]::Abs($totalDayChange)) 2)
+$totDayChangePctStr = $totDayChangePctSign + (Format-NumberLocalized $totalDayChangePct 2)
+$totChangeStr = $totChangeSign + (Format-NumberLocalized ([math]::Abs($totalChange)) 2)
+$totChangePctStr = $totChangePctSign + (Format-NumberLocalized $totalChangePct 2)
+$totValueStr = Format-NumberLocalized $totalValue 2
+$totCostStr = Format-NumberLocalized $totalCost 2
+
+$s1 = "Day change: ${dcColor}$(Get-TrendArrow $totalDayChange) $totDayChangeStr ($totDayChangePctStr%)$Reset"
+$s2 = $twrrStr
+$s3 = $mwrrStr
+$s4 = "P/L: ${tcColor}$(Get-TrendArrow $totalChange) $totChangeStr ($totChangePctStr%)${Reset} = ${Gray}Value ${White}$totValueStr${Reset} - ${Gray}Cost ${White}$totCostStr${Reset}"
+
+Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $s1 ", " $s2 ", " $s3 ", " $s4", "$s5") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent ""
+
+# E-bis. Portfolio Metrics (Responsive layout)
+if ($csvMetricsAvailable) {
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", $m3, $m4, $m5, $m6) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m7", "  $m8", "= $m9") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "                       "
+}
+
+
+$null = $outputBuffer.AppendLine("-" * $consoleWidth)
+
+# --- LOG APPEND: TSV log with header row creation if missing ---
+try {
+    $logPath = Join-Path $targetLogDir "pfpeek-log.tsv"
+    $ic = [System.Globalization.CultureInfo]::InvariantCulture
+
+    $logStats = [ordered]@{
+        TotalValue        = $totalValue.ToString('F2', $ic)
+        TotalCost         = $totalCost.ToString('F2', $ic)
+        TotalChange       = $totalChange.ToString('F2', $ic)
+        TotalChangePct    = $totalChangePct.ToString('F2', $ic)
+        TotalDayChange    = $totalDayChange.ToString('F2', $ic)
+        TotalDayChangePct = $totalDayChangePct.ToString('F2', $ic)
+        TWRRPct           = if ($csvMetricsAvailable -and $null -ne $twrr) { ($twrr * 100).ToString('F2', $ic) } else { "" }
+        MWRRPct           = if ($csvMetricsAvailable -and $null -ne $mwrr) { ($mwrr * 100).ToString('F2', $ic) } else { "" }
+        ExpensesTotal     = if ($csvMetricsAvailable) { $totalExpensesSustained.ToString('F2', $ic) } else { "" }
+        ExpensesOfGainPct = if ($csvMetricsAvailable -and $null -ne $costRatio) { $costRatio.ToString('F2', $ic) } else { "" }
+        Commissions       = if ($csvMetricsAvailable) { $totalCommissions.ToString('F2', $ic) } else { "" }
+        StampDuty         = if ($csvMetricsAvailable) { $totalStampDuty.ToString('F2', $ic) } else { "" }
+        CapitalGainTaxes  = if ($csvMetricsAvailable) { $totalWithholdingTaxes.ToString('F2', $ic) } else { "" }
+        BuyTrades         = if ($csvMetricsAvailable) { $buyCount } else { "" }
+        SellTrades        = if ($csvMetricsAvailable) { $sellCount } else { "" }
+        OpenPositions     = if ($csvMetricsAvailable) { $totalOpenPositions } else { $assets.Count }
+        ClosedPositions   = if ($csvMetricsAvailable) { $totalClosedPositions } else { "" }
+        FirstInvestDate   = if ($csvMetricsAvailable -and $firstInvestmentDate) { $firstInvestmentDate.ToString('dd/MM/yyyy') } else { "" }
+        LatestTradeDate   = if ($csvMetricsAvailable -and $latestTradeDate) { $latestTradeDate.ToString('dd/MM/yyyy') } else { "" }
+        DaysInvested      = if ($csvMetricsAvailable) { $investmentDurationFormatted } else { "" }
+        Deposited         = if ($csvMetricsAvailable) { $totalDeposited.ToString('F2', $ic) } else { "" }
+        Withdrawn         = if ($csvMetricsAvailable) { $totalWithdrawn.ToString('F2', $ic) } else { "" }
+        RealizedGain      = if ($csvMetricsAvailable) { $totalRealizedGain.ToString('F2', $ic) } else { "" }
+    }
+
+    if (-not (Test-Path $logPath)) {
+        $headerLine = (@("Timestamp", "LogLevel") + @($logStats.Keys)) -join "`t"
+        Set-Content -Path $logPath -Value $headerLine -Encoding UTF8
+    }
+
+    $logTimestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $logLine = (@($logTimestamp, "INFO") + @($logStats.Values)) -join "`t"
+    Add-Content -Path $logPath -Value $logLine -Encoding UTF8
+} catch {
+    Write-Warning "WARNING: Unable to write log row to ${logPath}: $_"
 }
 
 foreach ($renderInfo in $assetRenderInfos) {
