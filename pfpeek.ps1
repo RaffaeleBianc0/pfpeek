@@ -20,7 +20,7 @@
 
 .NOTES
     AUTHOR:      Raffaele Bianco
-    VERSION:     1.73 (2026-08-26)
+    VERSION:     1.74 (2026-08-27)
     BLOG POST:   https://www.raffaelebianco.it/blog/p/pfpeek/
     GITHUB REPO: https://github.com/RaffaeleBianc0/pfpeek
 #>
@@ -931,12 +931,22 @@ function Invoke-InterpolateData ($originalValues, $targetSize) {
     $origCount = $originalValues.Count
 
     for ($i = 0; $i -lt $targetSize; $i++) {
-        $percent = $i / ($targetSize - 1)
-        $exactIdx = $percent * ($origCount - 1)
-        
-        $lowIdx = [math]::Floor($exactIdx)
-        $highIdx = [math]::Ceiling($exactIdx)
-        $weight = $exactIdx - $lowIdx
+        # NOTE: $i/$targetSize/$origCount are all [int]. When the division below
+        # comes out exact (e.g. at i=0 or i=targetSize-1), PowerShell keeps the
+        # result as [int] instead of promoting it to [double]. [math]::Floor()/
+        # ::Ceiling() are then called with an ambiguous Int32 argument and, per a
+        # known PowerShell overload-resolution quirk, silently pick the [decimal]
+        # overload instead of the [double] one - poisoning $weight as [decimal].
+        # Multiplying that decimal $weight by a [double] delta later then throws
+        # "Value was either too large or too small for a Decimal" whenever the
+        # delta is huge/NaN/Infinity. Forcing every step to explicit [double]
+        # avoids the ambiguous overload entirely, so no decimal ever appears here.
+        $percent = [double]$i / [double]($targetSize - 1)
+        $exactIdx = $percent * [double]($origCount - 1)
+
+        $lowIdx = [int][math]::Floor([double]$exactIdx)
+        $highIdx = [int][math]::Ceiling([double]$exactIdx)
+        $weight = [double]$exactIdx - [double]$lowIdx
 
         $lowVal = [double]$originalValues[$lowIdx]
         $highVal = [double]$originalValues[$highIdx]
@@ -948,7 +958,19 @@ function Invoke-InterpolateData ($originalValues, $targetSize) {
 
 # --- BRAILLE SPARKLINE CHART GENERATOR ---
 function Get-BrailleSparkline ($values, $height = 10, $targetWidth, $visibleRatio = $null, [switch]$Filled) {
-    $validValues = @($values | Where-Object { $_ -is [valueType] })
+    # Beyond plain type-filtering, floating-point NaN/Infinity values (e.g. gaps
+    # in historical price data) must also be dropped here: they are still a
+    # [valueType] so the old filter let them through, and once inside they
+    # propagate through interpolation/min/max/normalization until [math]::Round()
+    # tries to cast a NaN to [Int32] and crashes. Filtering them out here means
+    # the sparkline simply skips/interpolates over the gap instead of crashing.
+    $validValues = @($values | Where-Object {
+        if ($_ -isnot [valueType]) { return $false }
+        if ($_ -is [double] -or $_ -is [single]) {
+            return -not ([double]::IsNaN($_) -or [double]::IsInfinity($_))
+        }
+        return $true
+    })
     if ($validValues.Count -eq 0) { return "  [No data available to render chart]" }
 
     $logicalWidth = $targetWidth * 2
@@ -972,6 +994,10 @@ function Get-BrailleSparkline ($values, $height = 10, $targetWidth, $visibleRati
 
     for ($col = 0; $col -lt $colsToPlot; $col++) {
         $norm = ([double]$resizedValues[$col] - [double]$min) / [double]$range
+        # Defensive clamp: guards against any residual NaN/Infinity slipping
+        # through (e.g. from an extreme overflow during interpolation) so
+        # [math]::Round() never receives a value it can't cast to [Int32].
+        if ([double]::IsNaN($norm) -or [double]::IsInfinity($norm)) { $norm = 0.5 }
         $targetY = [int][math]::Round($norm * ($gridHeight - 1))
         
         if ($Filled) {
@@ -1976,19 +2002,18 @@ $totValueStr = Format-NumberLocalized $totalValue 2
 $totCostStr = Format-NumberLocalized $totalCost 2
 
 $s1 = "Day change: ${dcColor}$(Get-TrendArrow $totalDayChange) $totDayChangeStr ($totDayChangePctStr%)$Reset"
-$s1b = $twrrStr
-$s2 = $mwrrStr
-$s3 = "P/L: ${tcColor}$(Get-TrendArrow $totalChange) $totChangeStr ($totChangePctStr%)${Reset}"
-$s4 = "= ${Gray}Value ${White}$totValueStr${Reset} - ${Gray}Cost ${White}$totCostStr${Reset}"
+$s2 = $twrrStr
+$s3 = $mwrrStr
+$s4 = "P/L: ${tcColor}$(Get-TrendArrow $totalChange) $totChangeStr ($totChangePctStr%)${Reset} = ${Gray}Value ${White}$totValueStr${Reset} - ${Gray}Cost ${White}$totCostStr${Reset}"
 
-Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $s1 ", " $s1b ", " $s2 ", " $s3", "$s4") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "  "
+Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $s1 ", " $s2 ", " $s3 ", " $s4", "$s5") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent ""
 
 # E-bis. Portfolio Metrics (Responsive layout)
 if ($csvMetricsAvailable) {
 
     $totalGainAllTime = $totalValue + $totalWithdrawn - $totalDeposited
     if ($totalDeposited -ne 0) {
-        $costRatio = if ($totalGainAllTime -gt 0) { ($totalExpensesSustained / $totalGainAllTime) * 100 } else { $null }
+        $costRatio = if ($totalGainAllTime -gt 0) { ($totalExpensesSustained / $totalRealizedGain) * 100 } else { $null }
     } elseif ($totalCost -ne 0) {
         $costRatio = ($totalExpensesSustained / $totalCost) * 100
     } else {
@@ -2005,21 +2030,21 @@ if ($csvMetricsAvailable) {
     $totDepStr = Format-NumberLocalized $totalDeposited 2
     $totWithStr = Format-NumberLocalized $totalWithdrawn 2
 
-    $m2 = "Expenses: ${Orange}$totExpStr${Reset} (${Orange}${costRatioStr} ${Reset}of gain)"
-    $m3 = "${Gray}Commissions${Reset} ${Orange}$totComStr${Reset} + ${Gray}Stamp duty${Reset} ${Orange}$totStampStr${Reset} + ${Gray}Capital gain taxes${Reset} ${Orange}$totTaxStr${Reset}"
-    $m4 = "${Gray}Trades:${Reset} ${White}${buyCount} buy & ${sellCount} sell${Reset}"
-    $m5 = "${Gray}Positions:${Reset} ${White}${totalOpenPositions} open & ${totalClosedPositions} closed${Reset}"
-    $m6 = "${Gray}First invest:${Reset} ${White}${firstInvestStr}${Reset} (${White}${investmentDurationFormatted} ago${Reset})"
-    $m6b = "${Gray}Latest buy/sell:${Reset} ${White}${latestTradeStr}${Reset}"
-    $m7 = "${Gray}Deposited:${Reset} ${White}$totDepStr${Reset}  ${Gray}Withdrawn:${Reset} ${White}$totWithStr${Reset}"
+    $m2 = "${Gray}Trades:${Reset} ${White}${buyCount} buy & ${sellCount} sell${Reset}"
+    $m3 = "${Gray}Positions:${Reset} ${White}${totalOpenPositions} open & ${totalClosedPositions} closed${Reset}"
+    $m4 = "${Gray}First invest:${Reset} ${White}${firstInvestStr}${Reset} (${White}${investmentDurationFormatted} ago${Reset})"
+    $m5 = "${Gray}Latest buy/sell:${Reset} ${White}${latestTradeStr}${Reset}"
+    $m6 = "${Gray}Deposited:${Reset} ${White}$totDepStr${Reset}  ${Gray}Withdrawn:${Reset} ${White}$totWithStr${Reset}"
 
     $realizedGainSign = if ($totalRealizedGain -lt 0) { "-" } else { "" }
     $realizedGainStr = $realizedGainSign + (Format-NumberLocalized ([math]::Abs($totalRealizedGain)) 2)
     $realizedGainColor = Get-TrendColor $totalRealizedGain
-    $m8 = "Realized gains: ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
+    $m7 = "Realized: ${realizedGainColor}$(Get-TrendArrow $totalRealizedGain) ${realizedGainStr}${Reset}"
 
-    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", "= $m3") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "  "
-    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m4", $m5, $m6, $m6b, $m7, $m8) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+    $m8 = "Expenses: ${Orange}$totExpStr${Reset} (${Orange}${costRatioStr} ${Gray}of realized${Reset})"
+    $m9 = "${Gray}Commissions${Reset} ${Orange}$totComStr${Reset} + ${Gray}Stamp duty${Reset} ${Orange}$totStampStr${Reset} + ${Gray}Capital gain taxes${Reset} ${Orange}$totTaxStr${Reset}"
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m2", $m3, $m4, $m5, $m6) -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+    Write-WrappedSegments -OutputBuffer $outputBuffer -Segments @(" $m7", "  $m8", "= $m9") -ConsoleWidth $consoleWidth -Separator " " -ContinuationIndent "                       "
 }
 
 $null = $outputBuffer.AppendLine("-" * $consoleWidth)
