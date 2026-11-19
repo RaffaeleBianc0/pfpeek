@@ -10,17 +10,25 @@
     |_|      |_|
 
     Retrieves real-time and historical financial data from Yahoo Finance or local CSV exports, calculates portfolio performance metrics, and renders sparkline charts and tables.
+
     FEATURES:
         * Real-time and historical portfolio tracking.
         * Automatic integration with Directa Trading CSV export.
-        * Adaptive console layout with dynamic text wrapping.
+        * Adaptive console layout.
         * Braille-based sparkline charts for intraday and long-term performance.
         * Comprehensive financial metrics including XIRR/MWRR, expenses, and trades breakdown.
-        * Automated TSV logging of portfolio performance statistics on each run.
+        * Yahoo Finance retries, cached-quote fallback, and visible stale or missing quote status.
+        * Automated TSV logging of portfolio metrics and quote quality.
+
+    WHAT'S NEW IN v2:
+        * Refreshes periodically.
+        * Layout adapts to smaller consoles / bigger fonts.
+        * Yahoo requests report clearer failures, retry transient errors with bounded backoff, and reuse cached quotes when available.
+        * Stale and missing quotes are identified in the report and recorded in the TSV log.
 
 .NOTES
-    AUTHOR:      Raffaele Bianco
-    VERSION:     1.89 (2026-11-19)
+    AUTHOR:      Raffaele Bianco, GitHub Copilot, Claude, Gemini
+    VERSION:     2.00 (2026-11-19)
     BLOG POST:   https://www.raffaelebianco.it/blog/p/pfpeek/
     GITHUB REPO: https://github.com/RaffaeleBianc0/pfpeek
 #>
@@ -99,10 +107,188 @@ $script:DirectaCsvHeaderFields = @(
     "Divisa", "RiferimentoOrdine"
 )
 
+$script:lastGoodQuotes = @{}
+
 function Get-VisibleLength {
     param([AllowNull()][string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return 0 }
     return ([regex]::Replace($Text, "\x1b\[[0-9;]*[a-zA-Z]", "")).Length
+}
+
+function Get-IntradayTimelineLayout {
+    param([ValidateRange(6, 32767)][int]$TargetWidth)
+
+    $points = @(
+        [pscustomobject]@{ Label = "Prev"; Hour = 9; Min = 0; IsPrev = $true }
+        [pscustomobject]@{ Label = "09"; Hour = 9; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "10"; Hour = 10; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "11"; Hour = 11; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "12"; Hour = 12; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "13"; Hour = 13; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "14"; Hour = 14; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "15"; Hour = 15; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "16"; Hour = 16; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "17"; Hour = 17; Min = 0; IsPrev = $false }
+        [pscustomobject]@{ Label = "17:30"; Hour = 17; Min = 30; IsPrev = $false }
+    )
+
+    $minuteLabelsFit = $true
+    $previousEnd = -1
+    $hasPreviousLabel = $false
+    foreach ($point in $points) {
+        if (-not $point.IsPrev -and $point.Hour -eq 9 -and $point.Min -eq 0) { continue }
+        $label = if ($point.IsPrev -or ($point.Hour -eq 17 -and $point.Min -eq 30)) {
+            $point.Label
+        }
+        else {
+            "{0:00}:{1:00}" -f $point.Hour, $point.Min
+        }
+
+        $percent = if ($point.IsPrev) {
+            0.0
+        }
+        else {
+            $totalMinutesStart = 9 * 60
+            $totalMinutesEnd = (17 * 60) + 30
+            $currentMinutes = $point.Hour * 60 + $point.Min
+            0.12 + (0.88 * (($currentMinutes - $totalMinutesStart) / ($totalMinutesEnd - $totalMinutesStart)))
+        }
+        $consoleX = [int][math]::Round($percent * ($TargetWidth - 1))
+        $startPos = [math]::Max(0, $consoleX - [int]($label.Length / 2))
+        if ($startPos + $label.Length -gt $TargetWidth) { $startPos = $TargetWidth - $label.Length }
+        if ($hasPreviousLabel -and $startPos -le ($previousEnd + 1)) {
+            $minuteLabelsFit = $false
+            break
+        }
+        $previousEnd = $startPos + $label.Length - 1
+        $hasPreviousLabel = $true
+    }
+
+    $labels = [System.Collections.Generic.List[object]]::new()
+    foreach ($point in $points) {
+        if (-not $point.IsPrev -and $point.Hour -eq 9 -and $point.Min -eq 0) { continue }
+        $label = if ($point.IsPrev -or ($point.Hour -eq 17 -and $point.Min -eq 30)) {
+            $point.Label
+        }
+        elseif ($minuteLabelsFit) {
+            "{0:00}:{1:00}" -f $point.Hour, $point.Min
+        }
+        else {
+            "{0:00}" -f $point.Hour
+        }
+        $percent = if ($point.IsPrev) {
+            0.0
+        }
+        else {
+            $totalMinutesStart = 9 * 60
+            $totalMinutesEnd = (17 * 60) + 30
+            $currentMinutes = $point.Hour * 60 + $point.Min
+            0.12 + (0.88 * (($currentMinutes - $totalMinutesStart) / ($totalMinutesEnd - $totalMinutesStart)))
+        }
+        $consoleX = [int][math]::Round($percent * ($TargetWidth - 1))
+        $startPos = [math]::Max(0, $consoleX - [int]($label.Length / 2))
+        if ($startPos + $label.Length -gt $TargetWidth) { $startPos = $TargetWidth - $label.Length }
+        $labels.Add([pscustomobject]@{ Label = $label; Start = $startPos })
+    }
+
+    return [pscustomobject]@{
+        UsesMinuteLabels = $minuteLabelsFit
+        Labels           = $labels.ToArray()
+    }
+}
+
+function Resolve-QuoteSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$FreshQuotes,
+        [Parameter(Mandatory = $true)][object[]]$Assets,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Cache,
+        [datetime]$FetchedAt = (Get-Date)
+    )
+
+    $resolvedQuotes = @{}
+    $staleQuotes = @{}
+    $missingQuotes = [System.Collections.Generic.List[string]]::new()
+    foreach ($asset in $Assets) {
+        $ticker = [string]$asset.Ticker
+        if ($FreshQuotes.Contains($ticker) -and $null -ne $FreshQuotes[$ticker]) {
+            $quote = $FreshQuotes[$ticker]
+            $Cache[$ticker] = [pscustomobject]@{ Quote = $quote; FetchedAt = $FetchedAt }
+            $resolvedQuotes[$ticker] = $quote
+        }
+        elseif ($Cache.Contains($ticker) -and $null -ne $Cache[$ticker].Quote) {
+            $cachedQuote = $Cache[$ticker]
+            $resolvedQuotes[$ticker] = $cachedQuote.Quote
+            $age = $FetchedAt - [datetime]$cachedQuote.FetchedAt
+            $staleQuotes[$ticker] = [pscustomobject]@{
+                Quote      = $cachedQuote.Quote
+                FetchedAt  = $cachedQuote.FetchedAt
+                AgeSeconds = [math]::Max(0, $age.TotalSeconds)
+            }
+        }
+        else {
+            $missingQuotes.Add($ticker)
+        }
+    }
+
+    return [pscustomobject]@{
+        Quotes  = $resolvedQuotes
+        Stale   = $staleQuotes
+        Missing = $missingQuotes.ToArray()
+    }
+}
+
+function Get-YahooResponseStatusCode {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+    $response = $ErrorRecord.Exception.Response
+    if ($null -eq $response) { return $null }
+    $statusCode = $response.PSObject.Properties["StatusCode"]
+    if ($null -eq $statusCode) { return $null }
+    return [int]$statusCode.Value
+}
+
+function Get-YahooRequestFailureSummary {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+    $statusCode = Get-YahooResponseStatusCode -ErrorRecord $ErrorRecord
+    if ($statusCode -eq 429) { return "HTTP 429 rate limit" }
+    if ($statusCode -eq 401 -or $statusCode -eq 403) { return "HTTP $statusCode authorization/consent failure" }
+    if ($null -ne $statusCode) { return "HTTP $statusCode" }
+    return $ErrorRecord.Exception.Message
+}
+
+function Invoke-YahooRequestWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Request,
+        [ValidateRange(1, 5)][int]$MaxAttempts = 3
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            return & $Request
+        }
+        catch {
+            $statusCode = Get-YahooResponseStatusCode -ErrorRecord $_
+            $isTransient = $null -eq $statusCode -or $statusCode -eq 408 -or $statusCode -eq 429 -or $statusCode -ge 500
+            if (-not $isTransient -or $attempt -eq $MaxAttempts) { throw }
+
+            $delaySeconds = [int][math]::Min(8, [math]::Pow(2, $attempt - 1))
+            if ($statusCode -eq 429) {
+                $response = $_.Exception.Response
+                $headers = if ($null -ne $response) { $response.PSObject.Properties["Headers"] } else { $null }
+                $retryAfter = if ($null -ne $headers -and $null -ne $headers.Value) { $headers.Value["Retry-After"] } else { $null }
+                $retryAfterSeconds = 0
+                if ([int]::TryParse([string]$retryAfter, [ref]$retryAfterSeconds)) {
+                    $delaySeconds = [int][math]::Min(8, [math]::Max(1, $retryAfterSeconds))
+                }
+                else {
+                    $retryAfterDate = [datetime]::MinValue
+                    if ([datetime]::TryParse([string]$retryAfter, [ref]$retryAfterDate)) {
+                        $delaySeconds = [int][math]::Min(8, [math]::Max(1, [math]::Ceiling(($retryAfterDate - (Get-Date)).TotalSeconds)))
+                    }
+                }
+            }
+            Start-Sleep -Seconds $delaySeconds
+        }
+    }
 }
 
 function Get-SegmentLayout {
@@ -332,9 +518,53 @@ function Add-PortfolioLogEntry {
         [string]$Timestamp
     )
 
+    $expectedHeader = @("Timestamp", "LogLevel") + @($Stats.Keys)
     if (-not (Test-Path -LiteralPath $Path)) {
-        $headerLine = (@("Timestamp", "LogLevel") + @($Stats.Keys)) -join "`t"
-        Set-Content -LiteralPath $Path -Value $headerLine -Encoding UTF8 -ErrorAction Stop
+        Set-Content -LiteralPath $Path -Value ($expectedHeader -join "`t") -Encoding UTF8 -ErrorAction Stop
+    }
+    else {
+        $existingLines = @(Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction Stop)
+        if ($existingLines.Count -eq 0) {
+            Set-Content -LiteralPath $Path -Value ($expectedHeader -join "`t") -Encoding UTF8 -ErrorAction Stop
+        }
+        else {
+            $existingHeader = $existingLines[0].Split([char]9)
+            if (($existingHeader -join "`t") -ne ($expectedHeader -join "`t")) {
+                if ($existingHeader.Count -gt $expectedHeader.Count) {
+                    throw "Portfolio log schema has more columns than the current writer supports."
+                }
+                for ($columnIndex = 0; $columnIndex -lt $existingHeader.Count; $columnIndex++) {
+                    if ($existingHeader[$columnIndex] -ne $expectedHeader[$columnIndex]) {
+                        throw "Portfolio log schema mismatch at column $($columnIndex + 1): expected '$($expectedHeader[$columnIndex])', found '$($existingHeader[$columnIndex])'."
+                    }
+                }
+
+                $updatedLines = [System.Collections.Generic.List[string]]::new()
+                $updatedLines.Add(($expectedHeader -join "`t"))
+                for ($lineIndex = 1; $lineIndex -lt $existingLines.Count; $lineIndex++) {
+                    $fields = [System.Collections.Generic.List[string]]::new()
+                    $fields.AddRange([string[]]$existingLines[$lineIndex].Split([char]9))
+                    if ($fields.Count -gt $expectedHeader.Count) {
+                        throw "Portfolio log row $($lineIndex + 1) has more fields than the current header."
+                    }
+                    while ($fields.Count -lt $expectedHeader.Count) { $fields.Add("") }
+                    $updatedLines.Add(($fields -join "`t"))
+                }
+
+                $directory = Split-Path -Parent $Path
+                if ([string]::IsNullOrWhiteSpace($directory)) { $directory = (Get-Location).Path }
+                $migrationPath = Join-Path $directory ([System.IO.Path]::GetRandomFileName())
+                try {
+                    Set-Content -LiteralPath $migrationPath -Value $updatedLines.ToArray() -Encoding UTF8 -ErrorAction Stop
+                    Move-Item -LiteralPath $migrationPath -Destination $Path -Force -ErrorAction Stop
+                }
+                finally {
+                    if (Test-Path -LiteralPath $migrationPath) {
+                        Remove-Item -LiteralPath $migrationPath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
     }
     $line = (@($Timestamp, "INFO") + @($Stats.Values)) -join "`t"
     Add-Content -LiteralPath $Path -Value $line -Encoding UTF8 -ErrorAction Stop
@@ -812,8 +1042,6 @@ function Show-ConsoleSizeWarning {
         [int]$RequiredHeight
     )
 
-    $boxWidth = 40
-    $boxHeight = 7
     while ($true) {
         $size = Get-ConsoleDimensions
         if ($null -eq $size) {
@@ -828,90 +1056,35 @@ function Show-ConsoleSizeWarning {
         $rawUi = $Host.UI.RawUI
         $windowSize = $rawUi.WindowSize
         $windowPosition = $rawUi.WindowPosition
-        if ($windowSize.Width -lt $boxWidth -or $windowSize.Height -lt $boxHeight) {
-            $minimumLabel = if ($windowSize.Width -lt 28) { "Min: " } else { "Minimum: " }
-            $currentLabel = if ($windowSize.Width -lt 28) { "Now: " } else { "Current: " }
-            $rowCount = [math]::Min(3, $windowSize.Height)
-            $firstRow = [int][math]::Floor(($windowSize.Height - $rowCount) / 2)
-            $drawCompactDimensionLine = {
-                param([int]$Row, [string]$Label, [int]$Width, [int]$Height, [ConsoleColor]$WidthColor, [ConsoleColor]$HeightColor)
-                $widthText = [string]$Width
-                $heightText = [string]$Height
-                $lineLength = $Label.Length + $widthText.Length + 3 + $heightText.Length
-                $x = $windowPosition.X + [math]::Max(0, [int][math]::Floor(($windowSize.Width - $lineLength) / 2))
-                $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($x, ($windowPosition.Y + $firstRow + $Row))
-                Write-Host $Label -ForegroundColor DarkGray -NoNewline
-                Write-Host $widthText -ForegroundColor $WidthColor -NoNewline
-                Write-Host " x " -ForegroundColor DarkGray -NoNewline
-                Write-Host $heightText -ForegroundColor $HeightColor -NoNewline
-            }
-            & $drawCompactDimensionLine 0 $minimumLabel $RequiredWidth $RequiredHeight White White
-            if ($rowCount -ge 2) {
-                $currentWidthColor = if ($size.Width -lt $RequiredWidth) { [ConsoleColor]::Red } else { [ConsoleColor]::Green }
-                $currentHeightColor = if ($size.Height -lt $RequiredHeight) { [ConsoleColor]::Red } else { [ConsoleColor]::Green }
-                & $drawCompactDimensionLine 1 $currentLabel $size.Width $size.Height $currentWidthColor $currentHeightColor
-            }
-            if ($rowCount -ge 3) {
-                $prompt = "Resize to continue"
-                $promptX = $windowPosition.X + [math]::Max(0, [int][math]::Floor(($windowSize.Width - $prompt.Length) / 2))
-                $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($promptX, ($windowPosition.Y + $firstRow + 2))
-                Write-Host $prompt -ForegroundColor DarkGray -NoNewline
-            }
-            Start-Sleep -Seconds 1
-            continue
+        $minimumLabel = if ($windowSize.Width -lt 28) { "Min: " } else { "Minimum: " }
+        $currentLabel = if ($windowSize.Width -lt 28) { "Now: " } else { "Current: " }
+        $rowCount = [math]::Min(3, $windowSize.Height)
+        $firstRow = [int][math]::Floor(($windowSize.Height - $rowCount) / 2)
+        $drawDimensionLine = {
+            param([int]$Row, [string]$Label, [int]$Width, [int]$Height, [ConsoleColor]$WidthColor, [ConsoleColor]$HeightColor)
+            $widthText = [string]$Width
+            $heightText = [string]$Height
+            $lineLength = $Label.Length + $widthText.Length + 3 + $heightText.Length
+            $x = $windowPosition.X + [math]::Max(0, [int][math]::Floor(($windowSize.Width - $lineLength) / 2))
+            $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($x, ($windowPosition.Y + $firstRow + $Row))
+            Write-Host $Label -ForegroundColor DarkGray -NoNewline
+            Write-Host $widthText -ForegroundColor $WidthColor -NoNewline
+            Write-Host " x " -ForegroundColor DarkGray -NoNewline
+            Write-Host $heightText -ForegroundColor $HeightColor -NoNewline
         }
 
-        $left = [math]::Max(0, [int][math]::Floor(($windowSize.Width - $boxWidth) / 2))
-        $top = [math]::Max(0, [int][math]::Floor(($windowSize.Height - $boxHeight) / 2))
-        $innerWidth = $boxWidth - 2
-        $originX = $windowPosition.X + $left
-        $originY = $windowPosition.Y + $top
-
-        $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($originX, $originY)
-        Write-Host ("+" + ("-" * $innerWidth) + "+") -ForegroundColor DarkGray -NoNewline
-
-        $drawCenteredLine = {
-            param([int]$Row, [string]$Text, [ConsoleColor]$Color = [ConsoleColor]::DarkGray)
-            $padding = [math]::Max(0, [int][math]::Floor(($innerWidth - $Text.Length) / 2))
-            $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($originX, ($originY + $Row))
-            Write-Host ("|" + (" " * $padding)) -ForegroundColor DarkGray -NoNewline
-            Write-Host $Text -ForegroundColor $Color -NoNewline
-            $rightPadding = [math]::Max(0, $innerWidth - $padding - $Text.Length)
-            Write-Host ((" " * $rightPadding) + "|") -ForegroundColor DarkGray -NoNewline
+        & $drawDimensionLine 0 $minimumLabel $RequiredWidth $RequiredHeight White White
+        if ($rowCount -ge 2) {
+            $currentWidthColor = if ($size.Width -lt $RequiredWidth) { [ConsoleColor]::Red } else { [ConsoleColor]::Green }
+            $currentHeightColor = if ($size.Height -lt $RequiredHeight) { [ConsoleColor]::Red } else { [ConsoleColor]::Green }
+            & $drawDimensionLine 1 $currentLabel $size.Width $size.Height $currentWidthColor $currentHeightColor
         }
-
-        & $drawCenteredLine 1 "pfpeek needs more space"
-        & $drawCenteredLine 2 ""
-
-        $requiredWidthText = [string]$RequiredWidth
-        $requiredHeightText = [string]$RequiredHeight
-        $requiredLineLength = "Minimum: ".Length + $requiredWidthText.Length + 3 + $requiredHeightText.Length
-        $requiredPadding = [math]::Max(0, [int][math]::Floor(($innerWidth - $requiredLineLength) / 2))
-        $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($originX, ($originY + 3))
-        Write-Host ("|" + (" " * $requiredPadding)) -ForegroundColor DarkGray -NoNewline
-        Write-Host "Minimum: " -ForegroundColor DarkGray -NoNewline
-        Write-Host $requiredWidthText -ForegroundColor White -NoNewline
-        Write-Host " x " -ForegroundColor DarkGray -NoNewline
-        Write-Host $requiredHeightText -ForegroundColor White -NoNewline
-        Write-Host ((" " * [math]::Max(0, $innerWidth - $requiredPadding - $requiredLineLength)) + "|") -ForegroundColor DarkGray -NoNewline
-
-        $currentWidthText = [string]$size.Width
-        $currentHeightText = [string]$size.Height
-        $currentLineLength = "Current: ".Length + $currentWidthText.Length + 3 + $currentHeightText.Length
-        $currentPadding = [math]::Max(0, [int][math]::Floor(($innerWidth - $currentLineLength) / 2))
-        $currentWidthColor = if ($size.Width -lt $RequiredWidth) { [ConsoleColor]::Red } else { [ConsoleColor]::Green }
-        $currentHeightColor = if ($size.Height -lt $RequiredHeight) { [ConsoleColor]::Red } else { [ConsoleColor]::Green }
-        $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($originX, ($originY + 4))
-        Write-Host ("|" + (" " * $currentPadding)) -ForegroundColor DarkGray -NoNewline
-        Write-Host "Current: " -ForegroundColor DarkGray -NoNewline
-        Write-Host $currentWidthText -ForegroundColor $currentWidthColor -NoNewline
-        Write-Host " x " -ForegroundColor DarkGray -NoNewline
-        Write-Host $currentHeightText -ForegroundColor $currentHeightColor -NoNewline
-        Write-Host ((" " * [math]::Max(0, $innerWidth - $currentPadding - $currentLineLength)) + "|") -ForegroundColor DarkGray -NoNewline
-
-        & $drawCenteredLine 5 "Resize the console to continue"
-        $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($originX, ($originY + 6))
-        Write-Host ("+" + ("-" * $innerWidth) + "+") -ForegroundColor DarkGray -NoNewline
+        if ($rowCount -ge 3) {
+            $prompt = "Resize the console to continue"
+            $promptX = $windowPosition.X + [math]::Max(0, [int][math]::Floor(($windowSize.Width - $prompt.Length) / 2))
+            $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($promptX, ($windowPosition.Y + $firstRow + 2))
+            Write-Host $prompt -ForegroundColor DarkGray -NoNewline
+        }
         Start-Sleep -Seconds 1
     }
 }
@@ -1571,84 +1744,14 @@ while ($true) {
 
     function Get-IntradayTimelineRow ($targetWidth) {
         $timelineChars = [char[]](" " * $targetWidth)
-        $points = @(
-            @{ Label = "Prev"; Hour = 9; Min = 0; IsPrev = $true }
-            @{ Label = "09"; Hour = 9; Min = 0 }
-            @{ Label = "10"; Hour = 10; Min = 0 }
-            @{ Label = "11"; Hour = 11; Min = 0 }
-            @{ Label = "12"; Hour = 12; Min = 0 }
-            @{ Label = "13"; Hour = 13; Min = 0 }
-            @{ Label = "14"; Hour = 14; Min = 0 }
-            @{ Label = "15"; Hour = 15; Min = 0 }
-            @{ Label = "16"; Hour = 16; Min = 0 }
-            @{ Label = "17"; Hour = 17; Min = 0 }
-            @{ Label = "17:30"; Hour = 17; Min = 30 }
-        )
-
-        $minuteLabelsFit = $true
-        $previousEnd = -1
-        $hasPreviousLabel = $false
-        foreach ($p in $points) {
-            if (-not $p.IsPrev -and $p.Hour -eq 9 -and $p.Min -eq 0) { continue }
-            $label = if ($p.IsPrev -or ($p.Hour -eq 17 -and $p.Min -eq 30)) {
-                $p.Label
-            }
-            else {
-                "{0:00}:{1:00}" -f $p.Hour, $p.Min
-            }
-
-            $percent = if ($p.IsPrev) {
-                0.0
-            }
-            else {
-                $totalMinutesStart = 9 * 60
-                $totalMinutesEnd = (17 * 60) + 30
-                $currentMinutes = $p.Hour * 60 + $p.Min
-                0.12 + (0.88 * (($currentMinutes - $totalMinutesStart) / ($totalMinutesEnd - $totalMinutesStart)))
-            }
-            $consoleX = [int][math]::Round($percent * ($targetWidth - 1))
-            $startPos = [math]::Max(0, $consoleX - [int]($label.Length / 2))
-            if ($startPos + $label.Length -gt $targetWidth) { $startPos = $targetWidth - $label.Length }
-            if ($hasPreviousLabel -and $startPos -le ($previousEnd + 1)) {
-                $minuteLabelsFit = $false
-                break
-            }
-            $previousEnd = $startPos + $label.Length - 1
-            $hasPreviousLabel = $true
-        }
-
-        foreach ($p in $points) {
-            if ($p.IsPrev) {
-                $percent = 0.0
-            }
-            else {
-                $totalMinutesStart = 9 * 60
-                $totalMinutesEnd = (17 * 60) + 30
-                $currentMinutes = $p.Hour * 60 + $p.Min
-                $percent = 0.12 + (0.88 * (($currentMinutes - $totalMinutesStart) / ($totalMinutesEnd - $totalMinutesStart)))
-            }
-        
-            $lblText = if ($p.IsPrev -or ($p.Hour -eq 17 -and $p.Min -eq 30)) {
-                $p.Label
-            }
-            elseif ($minuteLabelsFit) {
-                "{0:00}:{1:00}" -f $p.Hour, $p.Min
-            }
-            else {
-                "{0:00}" -f $p.Hour
-            }
-            if (-not $p.IsPrev -and $p.Hour -eq 9 -and $p.Min -eq 0) { continue }
-            $consoleX = [int][math]::Round($percent * ($targetWidth - 1))
-        
-            $startPos = [math]::Max(0, $consoleX - [int]($lblText.Length / 2))
-            if ($startPos + $lblText.Length -gt $targetWidth) { $startPos = $targetWidth - $lblText.Length }
-        
+        $layout = Get-IntradayTimelineLayout -TargetWidth $targetWidth
+        foreach ($point in $layout.Labels) {
             $canWrite = $true
-            for ($k = 0; $k -lt $lblText.Length; $k++) {
-                if ($timelineChars[$startPos + $k] -ne ' ') { $canWrite = $false; break }
+            for ($k = 0; $k -lt $point.Label.Length; $k++) {
+                if ($timelineChars[$point.Start + $k] -ne ' ') { $canWrite = $false; break }
             }
             if ($canWrite) {
-                for ($k = 0; $k -lt $lblText.Length; $k++) { $timelineChars[$startPos + $k] = $lblText[$k] }
+                for ($k = 0; $k -lt $point.Label.Length; $k++) { $timelineChars[$point.Start + $k] = $point.Label[$k] }
             }
         }
         return -join $timelineChars
@@ -1713,17 +1816,23 @@ while ($true) {
 
     # Strategy 1 ("basic"): works out-of-the-box for most US-based IPs.
     function Get-YahooCrumbBasic {
-        param($WebSession)
+        param($WebSession, [System.Collections.Generic.List[string]]$Diagnostics)
         try {
-            $null = Invoke-WebRequest -Uri "https://fc.yahoo.com" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10 -ErrorAction SilentlyContinue
+            $null = Invoke-YahooRequestWithRetry -Request {
+                Invoke-WebRequest -Uri "https://fc.yahoo.com" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            }
         }
-        catch {}
+        catch { $Diagnostics.Add("Basic session bootstrap: $(Get-YahooRequestFailureSummary -ErrorRecord $_)") }
         try {
-            $resp = Invoke-WebRequest -Uri "https://query2.finance.yahoo.com/v1/test/getcrumb" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10
+            $resp = Invoke-YahooRequestWithRetry -Request {
+                Invoke-WebRequest -Uri "https://query2.finance.yahoo.com/v1/test/getcrumb" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            }
             $c = $resp.Content.Trim()
             if ($c -and $c -notmatch "Too Many Requests") { return $c }
+            if ($c -match "Too Many Requests") { $Diagnostics.Add("Basic crumb endpoint returned a rate-limit response.") }
+            else { $Diagnostics.Add("Basic crumb endpoint returned an empty response.") }
         }
-        catch {}
+        catch { $Diagnostics.Add("Basic crumb request: $(Get-YahooRequestFailureSummary -ErrorRecord $_)") }
         return $null
     }
 
@@ -1733,14 +1842,19 @@ while ($true) {
     # HTTP, with no browser and no Yahoo account needed - what happens when a person manually
     # accepts Yahoo's cookie banner.
     function Get-YahooCrumbConsent {
-        param($WebSession)
+        param($WebSession, [System.Collections.Generic.List[string]]$Diagnostics)
         try {
-            $consentResp = Invoke-WebRequest -Uri "https://guce.yahoo.com/consent" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10
+            $consentResp = Invoke-YahooRequestWithRetry -Request {
+                Invoke-WebRequest -Uri "https://guce.yahoo.com/consent" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            }
             $html = $consentResp.Content
 
             $csrfToken = Get-HtmlInputValue -Html $html -Name "csrfToken"
             $sessionId = Get-HtmlInputValue -Html $html -Name "sessionId"
-            if (-not $csrfToken -or -not $sessionId) { return $null }
+            if (-not $csrfToken -or -not $sessionId) {
+                $Diagnostics.Add("Consent page did not contain the expected CSRF/session fields.")
+                return $null
+            }
 
             $bodyString = "agree=agree&agree=agree" +
             "&consentUUID=default" +
@@ -1751,48 +1865,81 @@ while ($true) {
 
             $null = Invoke-WebRequest -Uri "https://consent.yahoo.com/v2/collectConsent?sessionId=$sessionId" `
                 -WebSession $WebSession -Method Post -Body $bodyString -ContentType "application/x-www-form-urlencoded" `
-                -UseBasicParsing -TimeoutSec 10
-            $null = Invoke-WebRequest -Uri "https://guce.yahoo.com/copyConsent?sessionId=$sessionId" `
-                -WebSession $WebSession -UseBasicParsing -TimeoutSec 10
+                -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            $null = Invoke-YahooRequestWithRetry -Request {
+                Invoke-WebRequest -Uri "https://guce.yahoo.com/copyConsent?sessionId=$sessionId" `
+                    -WebSession $WebSession -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            }
 
-            $resp = Invoke-WebRequest -Uri "https://query2.finance.yahoo.com/v1/test/getcrumb" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10
+            $resp = Invoke-YahooRequestWithRetry -Request {
+                Invoke-WebRequest -Uri "https://query2.finance.yahoo.com/v1/test/getcrumb" -WebSession $WebSession -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            }
             $c = $resp.Content.Trim()
             if ($c -and $c -notmatch "Too Many Requests") { return $c }
+            if ($c -match "Too Many Requests") { $Diagnostics.Add("Consent crumb endpoint returned a rate-limit response.") }
+            else { $Diagnostics.Add("Consent crumb endpoint returned an empty response.") }
         }
-        catch {}
+        catch { $Diagnostics.Add("Consent flow: $(Get-YahooRequestFailureSummary -ErrorRecord $_)") }
         return $null
     }
 
     function Get-YahooCrumb {
         param($WebSession)
-        $c = Get-YahooCrumbBasic -WebSession $WebSession
-        if (-not $c) { $c = Get-YahooCrumbConsent -WebSession $WebSession }
-        return $c
+        $diagnostics = [System.Collections.Generic.List[string]]::new()
+        $c = Get-YahooCrumbBasic -WebSession $WebSession -Diagnostics $diagnostics
+        if (-not $c) { $c = Get-YahooCrumbConsent -WebSession $WebSession -Diagnostics $diagnostics }
+        return [pscustomobject]@{ Crumb = $c; Diagnostics = $diagnostics.ToArray() }
     }
 
     # --- FETCH DATA WITH TIMEOUT AND TRY/CATCH ---
     try {
         Step-Progress "Connecting to Yahoo Finance"
 
-        $crumb = Get-YahooCrumb -WebSession $webSession
+        $crumbResult = Get-YahooCrumb -WebSession $webSession
+        $crumb = $crumbResult.Crumb
         if (-not $crumb) {
-            throw "Unable to obtain a Yahoo Finance session token (crumb) after attempting the GDPR consent fallback."
+            $diagnosticSummary = if ($crumbResult.Diagnostics.Count -gt 0) { $crumbResult.Diagnostics -join " | " } else { "No usable response from either strategy." }
+            if ($script:lastGoodQuotes.Count -eq 0) {
+                throw "Unable to obtain a Yahoo Finance session token (crumb): $diagnosticSummary"
+            }
+            Write-Warning "Unable to refresh Yahoo Finance quotes ($diagnosticSummary); continuing with cached quotes."
+        }
+        if ($crumbResult.Diagnostics.Count -gt 0) {
+            Write-Verbose "Yahoo crumb retrieval diagnostics: $($crumbResult.Diagnostics -join ' | ')"
         }
 
         Step-Progress "Downloading real-time quotes"
 
-        $encodedCrumb = [uri]::EscapeDataString($crumb)
-        $apiUrl = "https://query2.finance.yahoo.com/v7/finance/quote?symbols=$tickers&crumb=$encodedCrumb"
-        $response = Invoke-RestMethod -Uri $apiUrl -WebSession $webSession -Method Get -TimeoutSec 10
-        $quotes = $response.quoteResponse.result
-        if (@($quotes).Count -eq 0) { throw "Yahoo Finance returned no quotes for the configured tickers." }
-        $quotesBySymbol = @{}
-        foreach ($quote in $quotes) {
-            if ($quote.symbol) { $quotesBySymbol[$quote.symbol] = $quote }
+        $freshQuotesBySymbol = @{}
+        if ($crumb) {
+            $encodedCrumb = [uri]::EscapeDataString($crumb)
+            $apiUrl = "https://query2.finance.yahoo.com/v7/finance/quote?symbols=$tickers&crumb=$encodedCrumb"
+            try {
+                $response = Invoke-YahooRequestWithRetry -Request {
+                    Invoke-RestMethod -Uri $apiUrl -WebSession $webSession -Method Get -TimeoutSec 10
+                }
+                foreach ($quote in $response.quoteResponse.result) {
+                    if ($quote.symbol) { $freshQuotesBySymbol[$quote.symbol] = $quote }
+                }
+            }
+            catch {
+                if ($script:lastGoodQuotes.Count -eq 0) { throw }
+                $failureSummary = Get-YahooRequestFailureSummary -ErrorRecord $_
+                Write-Warning "Live Yahoo quote request failed ($failureSummary); continuing with cached quotes."
+            }
         }
-        $missingQuotes = @($assets | Where-Object { -not $quotesBySymbol.ContainsKey($_.Ticker) } | ForEach-Object { $_.Ticker })
+        $quoteSnapshot = Resolve-QuoteSnapshot -FreshQuotes $freshQuotesBySymbol -Assets $assets -Cache $script:lastGoodQuotes
+        $quotesBySymbol = $quoteSnapshot.Quotes
+        $staleQuoteInfo = $quoteSnapshot.Stale
+        $missingQuotes = $quoteSnapshot.Missing
+        if ($quotesBySymbol.Count -eq 0) {
+            throw "Yahoo Finance returned no fresh quotes and no cached quotes are available."
+        }
+        if ($staleQuoteInfo.Count -gt 0) {
+            Write-Warning "Using cached Yahoo quotes for $($staleQuoteInfo.Count) ticker(s); their ages will be shown in the report."
+        }
         if ($missingQuotes.Count -gt 0) {
-            Write-Warning "Yahoo Finance returned no real-time quote for: $($missingQuotes -join ', '). Those positions will be omitted from current-value totals."
+            Write-Warning "Yahoo Finance returned no quote for: $($missingQuotes -join ', '). No cached quote is available; these positions will be omitted from current-value totals."
         }
 
         Step-Progress "Downloading historical & intraday data"
@@ -1823,12 +1970,38 @@ while ($true) {
             }
 
             function Invoke-SafeRest ($uri) {
-                try {
-                    return Invoke-RestMethod -Uri $uri -WebSession $webSession -Method Get -TimeoutSec 10
-                }
-                catch {
-                    $res.Warnings.Add("Request failed for ${ticker}: $_")
-                    return $null
+                for ($attempt = 1; $attempt -le 3; $attempt++) {
+                    try {
+                        return Invoke-RestMethod -Uri $uri -WebSession $webSession -Method Get -TimeoutSec 10 -ErrorAction Stop
+                    }
+                    catch {
+                        $response = $_.Exception.Response
+                        $statusProperty = if ($null -ne $response) { $response.PSObject.Properties["StatusCode"] } else { $null }
+                        $statusCode = if ($null -ne $statusProperty) { [int]$statusProperty.Value } else { $null }
+                        $isTransient = $null -eq $statusCode -or $statusCode -eq 408 -or $statusCode -eq 429 -or $statusCode -ge 500
+                        if (-not $isTransient -or $attempt -eq 3) {
+                            $statusLabel = if ($null -ne $statusCode) { " (HTTP $statusCode)" } else { "" }
+                            $res.Warnings.Add("Request failed for ${ticker} after $attempt attempt(s)${statusLabel}: $($_.Exception.Message)")
+                            return $null
+                        }
+
+                        $delaySeconds = [int][math]::Min(8, [math]::Pow(2, $attempt - 1))
+                        if ($statusCode -eq 429 -and $null -ne $response) {
+                            $headers = $response.PSObject.Properties["Headers"]
+                            $retryAfter = if ($null -ne $headers -and $null -ne $headers.Value) { $headers.Value["Retry-After"] } else { $null }
+                            $retryAfterSeconds = 0
+                            if ([int]::TryParse([string]$retryAfter, [ref]$retryAfterSeconds)) {
+                                $delaySeconds = [int][math]::Min(8, [math]::Max(1, $retryAfterSeconds))
+                            }
+                            else {
+                                $retryAfterDate = [datetime]::MinValue
+                                if ([datetime]::TryParse([string]$retryAfter, [ref]$retryAfterDate)) {
+                                    $delaySeconds = [int][math]::Min(8, [math]::Max(1, [math]::Ceiling(($retryAfterDate - (Get-Date)).TotalSeconds)))
+                                }
+                            }
+                        }
+                        Start-Sleep -Seconds $delaySeconds
+                    }
                 }
             }
 
@@ -2616,6 +2789,26 @@ while ($true) {
             }
         }
 
+        $quoteStatusSegments = [System.Collections.Generic.List[string]]::new()
+        if ($staleQuoteInfo.Count -gt 0 -or $missingQuotes.Count -gt 0) {
+            $quoteStatusSegments.Add("${Orange}QUOTE DATA:${Reset}")
+            foreach ($ticker in @($staleQuoteInfo.Keys | Sort-Object)) {
+                $age = [TimeSpan]::FromSeconds([double]$staleQuoteInfo[$ticker].AgeSeconds)
+                $ageLabel = if ($age.TotalDays -ge 1) {
+                    "{0:0}d" -f $age.TotalDays
+                }
+                elseif ($age.TotalHours -ge 1) {
+                    "{0:0}h" -f $age.TotalHours
+                }
+                else {
+                    "{0:0}m" -f [math]::Ceiling($age.TotalMinutes)
+                }
+                $quoteStatusSegments.Add("${Orange}STALE${Reset} ${White}${ticker}${Reset} (${ageLabel})")
+            }
+            foreach ($ticker in $missingQuotes) {
+                $quoteStatusSegments.Add("${Red}MISSING${Reset} ${White}${ticker}${Reset}")
+            }
+        }
 
         # --- FIXED ROWS & CHART HEIGHT CALCULATION ---
         # The asset table has already been laid out above using the exact same wrapping/break logic
@@ -2637,6 +2830,9 @@ while ($true) {
         }
         elseif (-not $csvMetricsAvailable) {
             if ($consoleWidth -lt 95 ) { $fixedRows += 1 }
+        }
+        if ($quoteStatusSegments.Count -gt 0) {
+            $fixedRows += Get-WrappedSegmentRowCount -Segments $quoteStatusSegments.ToArray() -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
         }
         # Assets table block: use the actual final row count from the shared break points.
         $assetRowsPerItem = if ($assetRenderInfos.Count -gt 0) {
@@ -2674,6 +2870,9 @@ while ($true) {
         # A. INTRADAY Chart Block
         $script:renderedTitle = "Portfolio performance $((Get-Date).ToString('dd/MM/yyyy HH:mm'))"
         $null = $outputBuffer.AppendLine("${White}${script:renderedTitle}${Reset}")
+        if ($quoteStatusSegments.Count -gt 0) {
+            Write-WrappedSegments -OutputBuffer $outputBuffer -Segments $quoteStatusSegments.ToArray() -ConsoleWidth $consoleWidth -Separator "  " -ContinuationIndent " "
+        }
 
         $intraFirstVal = $portfolioPrevCloseValue
         $intraLastVal = if ($portfolioIntradayFiltered.Count -gt 0) { $portfolioIntradayFiltered[-1] } else { 0 }
@@ -2794,6 +2993,8 @@ while ($true) {
                     TotalChangePct    = $totalChangePct.ToString('F2', $ic)
                     TotalDayChange    = $totalDayChange.ToString('F2', $ic)
                     TotalDayChangePct = $totalDayChangePct.ToString('F2', $ic)
+                    StaleQuoteTickers = (@($staleQuoteInfo.Keys | Sort-Object) -join ',')
+                    MissingQuoteTickers = ($missingQuotes -join ',')
                     TWRRPct           = if ($csvMetricsAvailable -and $null -ne $twrr) { ($twrr * 100).ToString('F2', $ic) } else { "" }
                     MWRRPct           = if ($csvMetricsAvailable -and $null -ne $mwrr) { ($mwrr * 100).ToString('F2', $ic) } else { "" }
                     ExpensesTotal     = if ($csvMetricsAvailable) { $totalExpensesSustained.ToString('F2', $ic) } else { "" }
